@@ -79,4 +79,15 @@ if ($Thinking) {
     --flash-attn off `
     --reasoning-format $ReasoningFormat `
     --cache-ram 0 `
+    --spec-type ngram-map-k `
     --api-key "local-llama"
+
+# --spec-type ngram-map-k is free upside. It drafts tokens by looking for
+# repeats of the current context, so drafting costs nothing - no second model.
+# When the reply quotes or reformats the prompt (editing, RAG answers that cite
+# sources, "rewrite this", code changes) it drafts ~49 tokens at a time and all
+# are accepted: 15.15 -> 53.90 tok/s, a 3.6x speedup. On ordinary prose it finds
+# no repeats and does nothing, measured at 15.36 vs 15.36 tok/s over three
+# prompts with byte-identical output. Unlike a draft *model* (--spec-type
+# draft-simple), which was 24-63% SLOWER here because the draft model's own
+# forward passes cost more than they saved.

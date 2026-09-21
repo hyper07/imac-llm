@@ -299,12 +299,63 @@ Only +5.3% on prompts, against −11.6% on generation and 1.7x the VRAM. Generat
 is bandwidth-bound, so the extra bytes cost more than the simpler unpacking
 saves. An 8B at Q8_0 would not fit in 8 GB regardless. **Stay on Q4_K_M.**
 
-### Speculative decoding: tested, net loss
+### Speculative decoding: draft models lose, ngram wins big
 
-The one large software lever for *generation* speed. A small draft model
-proposes several tokens; the big model verifies them in one batched pass. On
-hardware where a batch of 6 costs little more than a batch of 1, that yields
-1.5–2.5x. Tested here with Qwen3-0.6B Q8_0 as the draft
+Two different mechanisms live behind `--spec-type`, and they give opposite
+results on this GPU. **Ngram speculation is a large free win and is enabled in
+the launch script. Draft-model speculation is a substantial loss.**
+
+#### Ngram speculation — up to 3.6x, costs nothing
+
+Ngram methods draft by looking for repeats of the current context, so drafting
+costs nothing: no second model, just a lookup. Measured with `--parallel 1`,
+160 tokens, greedy, against an *echo* prompt (asking the model to repeat a
+passage back — the shape ngram is built for) and an ordinary prose prompt:
+
+| `--spec-type` | Echo prompt | Prose prompt | Draft accepted (echo) |
+|---|---|---|---|
+| none (baseline) | 15.15 | 15.35 | — |
+| `ngram-simple` | 46.53 | 15.37 | 140/140, mean len 18.5 |
+| `ngram-mod` | 24.78 | 15.24 | 128/237, mean len 33.0 |
+| `ngram-cache` | 30.07 | **12.81** | 140/140, but 0/48 on prose |
+| **`ngram-map-k`** | **53.90** | 15.16 | 144/144, mean len **49.0** |
+
+`ngram-map-k` drafts 49 tokens at a time and has every one accepted — a **3.6x
+speedup**. Verified it is genuinely free on ordinary work with a separate A/B
+over three varied non-echo prompts:
+
+| | mean generation |
+|---|---|
+| baseline | **15.36 tok/s** |
+| `ngram-map-k` | **15.36 tok/s** |
+
+Identical, with byte-identical outputs. It finds no repeats and quietly does
+nothing. Note `ngram-cache` is the one to avoid: it *cost* 16% on prose
+(12.81 vs 15.35) by drafting 48 tokens and having all 48 rejected.
+
+This pays off whenever the reply reuses the prompt — reformatting, editing,
+"rewrite this", code changes, and RAG answers that quote their sources. It does
+nothing for free-form chat, and nothing is exactly what it costs there.
+
+#### Multi-token prediction (`draft-mtp`) — not applicable
+
+Requires MTP heads built into the model, as DeepSeek-V3 and GLM-style models
+have. Qwen3-8B has none, and the server refuses to start rather than falling
+back:
+
+```
+common_speculative_init_result: failed to create MTP context
+srv    load_model: failed to create MTP context
+```
+
+Worth knowing it fails loudly, which is better than the silent no-op
+`--spec-type` has when left at its default.
+
+#### Draft models — 24-63% slower
+
+A small draft model proposes several tokens; the big model verifies them in one
+batched pass. On hardware where a batch of 6 costs little more than a batch of
+1, that yields 1.5–2.5x. Tested here with Qwen3-0.6B Q8_0 as the draft
 (`models\Qwen3-0.6B-Q8_0.gguf`, 610 MB), same tokenizer family as the 8B:
 
 ```
@@ -328,18 +379,21 @@ prompt. Draft-on-GPU runs used `--ctx-size 4096` to make room in VRAM.
 | ngram-simple (no draft model) | 15.30 | 15.28 | no hits on chat prompts |
 
 Every draft configuration is **24–63% slower** than no draft, even the one with
-94% acceptance. The reason is the same one that caps prompt processing:
-batch-1 decode runs on the fast, memory-bound mat-vec kernel, but verifying a
-handful of draft tokens is a small-batch matmul, and on Polaris (no fp16, no
-matrix cores) that path is slow enough that checking six tokens costs more than
-generating them one by one. The draft model is not free either — with this
-GPU's per-step overhead a 0.6B model is nowhere near 10x faster than the 8B.
-Baseline code varied 13.7–15.4 between runs; the speculative results sit far
+94% acceptance. Baseline code varied 13.7–15.4 between runs; these sit far
 outside that.
 
-Ngram speculation (`--spec-type ngram-simple`, no draft model) changed nothing
-on chat prompts. It only helps when the output repeats the input verbatim, as
-in code edits.
+The cause is the **draft model's own forward passes**, not the verification
+step. A 0.6B model is nowhere near 10x cheaper than the 8B once this GPU's
+fixed per-step overhead dominates, so drafting costs more than it saves. That
+verification itself is fine is proved by the ngram results above: with drafting
+free and a mean draft length of 49, verifying a large batch is a clear 3.6x
+win. Cheap drafting is what matters on this hardware, not batch verification.
+
+An earlier version of this file blamed the verify step — claiming small-batch
+matmul on Polaris made checking six tokens cost more than generating them. The
+ngram measurements disprove that, and the `ngram-simple` row in the table above
+(15.30 / 15.28, "no hits on chat prompts") was drawn from prose prompts only.
+On an echo-shaped prompt the same setting reaches 46.53 tok/s.
 
 ### Levers that do not work here
 
@@ -349,16 +403,18 @@ in code edits.
 | Larger prompts amortising overhead | Flat — 112 to 128 tok/s across 128-2048 |
 | Flash attention | Slower on prompts (122 vs 128) *and* produces garbage |
 | Q8_0 instead of Q4_K_M | +5% prompts, −12% generation, +71% VRAM |
-| Speculative decoding, 0.6B draft, 4 configs | 24–63% **slower**; small-batch verify beats no batch here |
-| ngram speculation | no measurable change on chat prompts |
+| Speculative decoding with a 0.6B **draft model**, 4 configs | 24–63% **slower** — the draft model's own forward passes cost more than they save |
+| ngram speculation on free-form chat | no change either way (15.36 vs 15.36) — but see below, it is a 3.6x win on echo-shaped prompts and is now enabled |
+| `--spec-type draft-mtp` | server refuses to start; Qwen3-8B has no MTP heads |
 | Pinning another upstream build to get flash attention | b11026 and b11065 corrupt long prompts and halve pp exactly like b11063; the working FA kernel is Ollama's fork only |
 | Default 4 slots with unified KV | not a speedup lever but a **slowdown**: −24% by the fourth conversation; fixed with `--parallel 1` (*One server slot*) |
 
-What *does* move the needle is not throughput but the two stalls: the
-~11.5 s RAM-prompt-cache readback (*RAM prompt cache must be off*, fixed) and
-Open WebUI's extra task calls (*Reducing prompt processing time*, item 2).
-Raw tok/s on this card is a hardware ceiling; the remaining upgrade is a GPU
-with fp16 and matrix cores.
+What *does* move the needle: `--spec-type ngram-map-k` (3.6x when the reply
+reuses the prompt, free otherwise), and the two stalls — the ~11.5 s
+RAM-prompt-cache readback (*RAM prompt cache must be off*) and Open WebUI's
+extra task calls (*Reducing prompt processing time*, item 2). Raw free-form
+generation on this card remains a hardware ceiling; the remaining upgrade is a
+GPU with fp16 and matrix cores.
 
 ### Reproducing the benchmark
 

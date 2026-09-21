@@ -101,13 +101,29 @@ Negative results, all measured:
 
 | Tried | Result |
 |---|---|
-| **Speculative decoding** (Qwen3-0.6B draft, 4 configs) | **24–63% slower.** Acceptance was fine, 61–94% |
+| **Speculative decoding with a draft model** (Qwen3-0.6B, 4 configs) | **24–63% slower.** Acceptance was fine, 61–94% |
 | Q8_0 instead of Q4_K_M | +5.3% prompt, −11.6% generation, +71% VRAM |
 | `-ub` micro-batch tuning | 512 already optimal; 1024 gains 0.2% |
 | Larger prompts amortizing overhead | Flat, 112→128 tok/s from 128 to 2048 tokens |
-| ngram speculation | No measurable change on chat prompts |
+| `--spec-type draft-mtp` | Won't start — Qwen3-8B has no MTP heads |
 
-**Speculative decoding deserves a note** because it's the lever everyone reaches for. It failed for a structural reason: batch-1 decode uses llama.cpp's fast memory-bound mat-vec kernel, but *verifying* 5–6 draft tokens is a small-batch matmul, and on Polaris — `fp16: 0`, `int dot: 0`, `matrix cores: none` — that path is slow enough that checking six tokens costs more than generating them one at a time. Same weakness caps prompt processing. Gotcha if you try it: `--spec-type` defaults to `none`, so `-md` alone loads the draft model and silently never uses it. Look for `draft acceptance` in the log.
+**But ngram speculation is a big free win, and I nearly missed it.** I'd first tested `ngram-simple` on ordinary prose, saw no change, and wrote it off. That was the wrong test — ngram drafts by finding repeats of the context, so you have to give it a prompt where the reply reuses the input. On an "echo this passage back" prompt, 160 tokens, greedy:
+
+| `--spec-type` | Echo prompt | Prose prompt |
+|---|---|---|
+| none | 15.15 | 15.35 |
+| `ngram-simple` | 46.53 | 15.37 |
+| `ngram-mod` | 24.78 | 15.24 |
+| `ngram-cache` | 30.07 | **12.81** ← avoid |
+| **`ngram-map-k`** | **53.90** | 15.16 |
+
+`ngram-map-k` drafts **49 tokens at a time with all 49 accepted — a 3.6x speedup**. I then A/B'd it over three varied non-echo prompts to check it isn't quietly costing anything: **15.36 vs 15.36 tok/s**, byte-identical outputs. It finds no repeats and does nothing. So it's free, and it's now on by default in my launcher. (`ngram-cache` is the one to avoid — it drafted 48 tokens on prose, had all 48 rejected, and cost 16%.)
+
+Real-world this helps whenever the reply reuses the prompt: reformatting, editing, "rewrite this", code changes, RAG answers that quote sources.
+
+**Why the draft model failed but ngram succeeded** — I had this wrong at first. I assumed verification was the problem: that small-batch matmul on Polaris made checking 6 tokens cost more than generating them. The ngram result disproves it — verifying a 49-token batch is a clear 3.6x win. The actual problem is the **draft model's own forward passes**: a 0.6B model isn't remotely 10x cheaper than an 8B once this GPU's fixed per-step overhead dominates. Cheap drafting is what matters here, not batch verification.
+
+Gotcha if you try draft models: `--spec-type` defaults to `none`, so `-md` alone loads the draft model and silently never uses it. Look for `draft acceptance` in the log.
 
 **Prompt caching, by contrast, does most of the real work** — same ~980-token prefix twice: 8.94 s cold → **0.87 s** warm, 964/979 tokens reused. The first long paste hurts; the rest of the conversation doesn't.
 
