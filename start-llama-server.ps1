@@ -79,15 +79,36 @@ if ($Thinking) {
     --flash-attn off `
     --reasoning-format $ReasoningFormat `
     --cache-ram 0 `
-    --spec-type ngram-map-k `
     --api-key "local-llama"
 
-# --spec-type ngram-map-k is free upside. It drafts tokens by looking for
-# repeats of the current context, so drafting costs nothing - no second model.
-# When the reply quotes or reformats the prompt (editing, RAG answers that cite
-# sources, "rewrite this", code changes) it drafts ~49 tokens at a time and all
-# are accepted: 15.15 -> 53.90 tok/s, a 3.6x speedup. On ordinary prose it finds
-# no repeats and does nothing, measured at 15.36 vs 15.36 tok/s over three
-# prompts with byte-identical output. Unlike a draft *model* (--spec-type
-# draft-simple), which was 24-63% SLOWER here because the draft model's own
-# forward passes cost more than they saved.
+# The first request after a model load is sometimes corrupt on this GPU: it
+# comes back as repeated junk ("softsoftsoft...", "*[ * * *", "?????") instead
+# of an answer. Measured across 3 fresh boots, the first request failed twice
+# and every later request was fine. A throwaway request absorbs it - across 4
+# boots with a warm-up, 0 of 12 real requests were corrupt. This job waits for
+# the API and burns that first request before you ever see it.
+Start-Job -ScriptBlock {
+    for ($i = 0; $i -lt 60; $i++) {
+        Start-Sleep -Seconds 3
+        try {
+            $b = @{ model = 'Qwen3-8B'; messages = @(@{ role = 'user'; content = 'hi' })
+                    max_tokens = 8; stream = $false } | ConvertTo-Json -Depth 5
+            Invoke-RestMethod 'http://127.0.0.1:8080/v1/chat/completions' -Method Post `
+                -ContentType 'application/json' -Headers @{Authorization = 'Bearer local-llama'} `
+                -Body $b -TimeoutSec 120 | Out-Null
+            break
+        } catch { }
+    }
+} | Out-Null
+
+# DO NOT add --spec-type ngram-map-k. It looked like free speed - 3.6x on
+# prompts whose reply reuses the input, and no measurable cost on prose - but
+# it CORRUPTS OUTPUT on this GPU. A Python-function prompt returned an unbroken
+# run of '?' on 6 of 6 runs with it enabled and 0 of 6 without, at 95/95 draft
+# acceptance, so the drafted garbage is being "verified" as correct. Same
+# failure signature as Vulkan flash attention above, which suggests the batched
+# verification path is not merely slow on Polaris but wrong.
+#
+# It was briefly enabled here on the strength of echo and prose benchmarks; no
+# code prompt had been checked. Any speculation setting on this GPU needs its
+# OUTPUT validated across prompt types, not just its tok/s.

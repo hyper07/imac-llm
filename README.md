@@ -305,7 +305,21 @@ Two different mechanisms live behind `--spec-type`, and they give opposite
 results on this GPU. **Ngram speculation is a large free win and is enabled in
 the launch script. Draft-model speculation is a substantial loss.**
 
-#### Ngram speculation — up to 3.6x, costs nothing
+#### Ngram speculation — fast, and **it corrupts output. Do not use it.**
+
+> **Retracted.** This section previously recommended `--spec-type ngram-map-k`
+> and it was enabled in the launch script. It produces **garbage output** on
+> this GPU. A Python-function prompt returned an unbroken run of `?` on **6 of
+> 6** runs with it enabled and **0 of 6** without, at 95/95 draft acceptance —
+> the drafted junk is being "verified" as correct. The flag has been removed.
+>
+> It was adopted on the strength of echo and prose benchmarks where output
+> happened to be fine; no code prompt had been checked. The speed numbers below
+> are real, the setting is not safe, and the lesson is that **any speculation
+> setting on this GPU must have its output validated across prompt types, not
+> just its tok/s**. This is the same failure signature as Vulkan flash
+> attention, which suggests the batched verification path on Polaris is not
+> merely slow but wrong.
 
 Ngram methods draft by looking for repeats of the current context, so drafting
 costs nothing: no second model, just a lookup. Measured with `--parallel 1`,
@@ -321,21 +335,21 @@ passage back — the shape ngram is built for) and an ordinary prose prompt:
 | **`ngram-map-k`** | **53.90** | 15.16 | 144/144, mean len **49.0** |
 
 `ngram-map-k` drafts 49 tokens at a time and has every one accepted — a **3.6x
-speedup**. Verified it is genuinely free on ordinary work with a separate A/B
-over three varied non-echo prompts:
+speedup**, and an A/B over three varied non-echo prompts showed 15.36 vs 15.36
+tok/s with byte-identical outputs, so it looked free.
 
-| | mean generation |
-|---|---|
-| baseline | **15.36 tok/s** |
-| `ngram-map-k` | **15.36 tok/s** |
+It is not. On a **code** prompt — a shape neither benchmark covered — it
+returns pure `?` every time:
 
-Identical, with byte-identical outputs. It finds no repeats and quietly does
-nothing. Note `ngram-cache` is the one to avoid: it *cost* 16% on prose
-(12.81 vs 15.35) by drafting 48 tokens and having all 48 rejected.
+| Config, code prompt x6 | corrupt runs | generation |
+|---|---|---|
+| `--spec-type ngram-map-k` | **6 of 6** | 28.9 tok/s of garbage |
+| no speculation | **0 of 6** | 15.3 tok/s, correct |
 
-This pays off whenever the reply reuses the prompt — reformatting, editing,
-"rewrite this", code changes, and RAG answers that quote their sources. It does
-nothing for free-form chat, and nothing is exactly what it costs there.
+100% draft acceptance on the corrupt runs, which is the tell: the verifier is
+agreeing with nonsense rather than rejecting it. `ngram-cache` is separately bad
+on speed too, costing 16% on prose (12.81 vs 15.35) by drafting 48 tokens and
+having all 48 rejected.
 
 #### Multi-token prediction — works, and it is the only thing that speeds up ordinary generation
 
@@ -402,9 +416,16 @@ baseline is so much lower that it does not catch up. Against the production
 config it is **−7% on prose, +17% on code, −64% on echo**, and it costs half the
 context.
 
-**So the 8B with `ngram-map-k` stays.** The one case for switching is
-code-heavy work where long context is not needed: +17% there, at 4096 tokens of
-context. The models are kept in `models\` for anyone wanting to re-test.
+**So the 8B stays** — though note the production baseline in that table
+included `ngram-map-k`, which has since been withdrawn as unsafe. Against the
+*correct* 8B baseline (15.3 tok/s, no speculation) the 9B with MTP is
+**−7% on prose and +17% on code**, and costs half the context.
+
+The one case for switching is code-heavy work where long context is not needed.
+Unlike ngram, **MTP produced correct output in every sample taken** — the code
+answers all began with valid Python — but it was not put through the same
+6-run-per-prompt corruption check, so validate it yourself before trusting it.
+The models are kept in `models\` for re-testing.
 
 #### Draft models — 24-63% slower
 
@@ -459,18 +480,18 @@ On an echo-shaped prompt the same setting reaches 46.53 tok/s.
 | Flash attention | Slower on prompts (122 vs 128) *and* produces garbage |
 | Q8_0 instead of Q4_K_M | +5% prompts, −12% generation, +71% VRAM |
 | Speculative decoding with a 0.6B **draft model**, 4 configs | 24–63% **slower** — the draft model's own forward passes cost more than they save |
-| ngram speculation on free-form chat | no change either way (15.36 vs 15.36) — but it is a 3.6x win on echo-shaped prompts and is now enabled |
+| ngram speculation | fast (3.6x on echo-shaped prompts) but **corrupts output** — 6 of 6 runs of a code prompt returned pure `?`. Withdrawn |
 | `--spec-type draft-mtp` on Qwen3-8B | server refuses to start; the model has no MTP heads |
 | Switching to an MTP model (Qwen3.5 4B / 9B) | MTP itself works (+28% / +57% on code over their own baselines) but neither beats the 8B + ngram setup: −7% prose, −64% echo, and half the context |
 | Pinning another upstream build to get flash attention | b11026 and b11065 corrupt long prompts and halve pp exactly like b11063; the working FA kernel is Ollama's fork only |
 | Default 4 slots with unified KV | not a speedup lever but a **slowdown**: −24% by the fourth conversation; fixed with `--parallel 1` (*One server slot*) |
 
-What *does* move the needle: `--spec-type ngram-map-k` (3.6x when the reply
-reuses the prompt, free otherwise), and the two stalls — the ~11.5 s
+What *does* move the needle are the two stalls, not throughput: the ~11.5 s
 RAM-prompt-cache readback (*RAM prompt cache must be off*) and Open WebUI's
-extra task calls (*Reducing prompt processing time*, item 2). Raw free-form
-generation on this card remains a hardware ceiling; the remaining upgrade is a
-GPU with fp16 and matrix cores.
+extra task calls (*Reducing prompt processing time*, item 2). Every attempt to
+raise raw tok/s either lost or, in the case of ngram speculation, corrupted
+output. Generation on this card is a hardware ceiling; the remaining upgrade is
+a GPU with fp16 and matrix cores.
 
 ### Reproducing the benchmark
 
@@ -588,6 +609,40 @@ already imported; see *What the numbers say*. The two test builds are kept in
 llama-server holds ~5.6 GiB of the 8 GiB and the 5K display takes most of the
 rest, leaving almost no headroom. Do not raise `--ctx-size` above 8192 without
 testing — it will spill to system memory or fail to allocate.
+
+### The first request after a model load can be corrupt
+
+Independent of any speculation setting, the **first** request after llama-server
+loads the model sometimes returns repeated junk instead of an answer:
+
+```
+softsoftsoftsoftsoftsoftsoftsoft...
+giú *********************************
+*[ * * * * * * * * * * * * * * * *
+```
+
+Measured over three fresh boots with the plain production flags (no
+speculation), six requests each: the first request was corrupt on **2 of 3**
+boots, and **every** later request was clean. One further boot lost the GPU
+outright mid-run:
+
+```
+decode() failed: vk::Queue::submit: ErrorDeviceLost
+```
+
+That one was transient — the adapter reported `Status: OK` afterwards, Vulkan
+still enumerated it, and Windows logged no TDR — and it followed dozens of rapid
+load/unload cycles from benchmarking, which is not normal use. Worth knowing the
+failure mode exists.
+
+**Mitigation, now in `start-llama-server.ps1`:** a background job waits for the
+API and sends one throwaway request, absorbing the bad one. Across four boots
+with that warm-up, **0 of 12** real requests were corrupt. It hides the symptom
+rather than fixing the cause, but the cause is in the Vulkan backend or the
+driver, not in this configuration.
+
+If you see junk on your very first message after starting the server, send it
+again — that is this bug, not the model.
 
 ### RAM prompt cache must be off
 

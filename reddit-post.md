@@ -10,7 +10,7 @@ stock option.
 
 ---
 
-**Title:** Benchmarked a $250 2017 iMac as a local LLM box: 16.7 tok/s on Qwen3-8B, and four config traps that cost me most of a day
+**Title:** Benchmarked a $250 2017 iMac as a local LLM box: 16.7 tok/s on Qwen3-8B, and five config traps that cost me most of a day
 
 ---
 
@@ -54,7 +54,7 @@ GPU is 3.2x CPU on the 8B. **Docker costs Ollama a third of its CPU speed** (WSL
 
 ---
 
-## The four config traps
+## The five config traps
 
 Each of these cost real time and none are obvious from the docs.
 
@@ -80,7 +80,9 @@ So a handful of clean chats prove nothing. The bait is real — FA is ~20% faste
 
 To verify on your own card: send a ~1000-token repeated-sentence prompt with prompt caching off, at least four times, and require every output to continue the sentence.
 
-**3. `--parallel 1` if you're the only user.** llama-server defaults to 4 slots sharing a unified KV cache, and every decode step attends across *all* slots' cached tokens. Each new conversation that lands in a fresh slot slows everything after it, and slots keep their stale KV until restart:
+**3. Your first message after starting the server may come back as junk.** Separate from any speculation setting. With plain flags, the first request after a model load returned repeated garbage — `softsoftsoftsoft...`, `giú ****`, `*[ * * *` — on **2 of 3** fresh boots, while every later request was clean. One boot lost the GPU outright with `vk::Queue::submit: ErrorDeviceLost`, though that was transient and followed heavy benchmark cycling. Fix: have your launcher fire one throwaway request after startup. Across 4 boots with a warm-up, **0 of 12** real requests were corrupt. If you see junk on your first message, just send it again — that's this, not the model.
+
+**4. `--parallel 1` if you're the only user.** llama-server defaults to 4 slots sharing a unified KV cache, and every decode step attends across *all* slots' cached tokens. Each new conversation that lands in a fresh slot slows everything after it, and slots keep their stale KV until restart:
 
 | Config | Prompt 1 | 2 | 3 | 4 |
 |---|---|---|---|---|
@@ -91,7 +93,7 @@ To verify on your own card: send a ~1000-token repeated-sentence prompt with pro
 
 This also poisons benchmarks: if you send several *different* prompts to a multi-slot server you're measuring slot fill, not whatever you think you're testing. It cost me a couple of bogus results before I caught it.
 
-**4. Your front-end is making extra calls.** Open WebUI defaults to generating chat tags and follow-up suggestions after every message, each re-sending the whole conversation as its own prompt pass. That's three passes per message instead of one. Free to turn off.
+**5. Your front-end is making extra calls.** Open WebUI defaults to generating chat tags and follow-up suggestions after every message, each re-sending the whole conversation as its own prompt pass. That's three passes per message instead of one. Free to turn off.
 
 ---
 
@@ -107,7 +109,7 @@ Negative results, all measured:
 | Larger prompts amortizing overhead | Flat, 112→128 tok/s from 128 to 2048 tokens |
 | `--spec-type draft-mtp` | Won't start — Qwen3-8B has no MTP heads |
 
-**But ngram speculation is a big free win, and I nearly missed it.** I'd first tested `ngram-simple` on ordinary prose, saw no change, and wrote it off. That was the wrong test — ngram drafts by finding repeats of the context, so you have to give it a prompt where the reply reuses the input. On an "echo this passage back" prompt, 160 tokens, greedy:
+**Ngram speculation looks like a huge free win and it silently corrupts output. Don't use it on this hardware.** I nearly shipped this. I'd first tested `ngram-simple` on prose, saw no change, wrote it off; then realised that was the wrong test — ngram drafts by finding repeats of the context, so you need a prompt whose reply reuses the input. On an "echo this passage back" prompt, 160 tokens, greedy, the numbers are spectacular:
 
 | `--spec-type` | Echo prompt | Prose prompt |
 |---|---|---|
@@ -117,9 +119,18 @@ Negative results, all measured:
 | `ngram-cache` | 30.07 | **12.81** ← avoid |
 | **`ngram-map-k`** | **53.90** | 15.16 |
 
-`ngram-map-k` drafts **49 tokens at a time with all 49 accepted — a 3.6x speedup**. I then A/B'd it over three varied non-echo prompts to check it isn't quietly costing anything: **15.36 vs 15.36 tok/s**, byte-identical outputs. It finds no repeats and does nothing. So it's free, and it's now on by default in my launcher. (`ngram-cache` is the one to avoid — it drafted 48 tokens on prose, had all 48 rejected, and cost 16%.)
+`ngram-map-k` drafts **49 tokens at a time with all 49 accepted — a 3.6x speedup**. I A/B'd it over three varied non-echo prompts to check it wasn't quietly costing anything: **15.36 vs 15.36 tok/s**, byte-identical outputs. Free speed. I enabled it.
 
-Real-world this helps whenever the reply reuses the prompt: reformatting, editing, "rewrite this", code changes, RAG answers that quote sources.
+**Then I ran a code prompt through it.** Pure `?` characters, every time:
+
+| Code prompt, 6 runs | corrupt | speed |
+|---|---|---|
+| `--spec-type ngram-map-k` | **6 of 6** | 28.9 tok/s of garbage |
+| no speculation | **0 of 6** | 15.3 tok/s, correct |
+
+100% draft acceptance on the corrupt runs — the verifier is agreeing with nonsense instead of rejecting it. Same signature as the flash-attention bug, which makes me think the batched verification path on Polaris isn't just slow, it's **wrong**.
+
+My benchmarks covered echo and prose. Neither happened to break. A code prompt broke it instantly. **If you try speculative decoding on an old AMD card, check the actual text across several prompt types — not just tok/s.** The failure is silent, plausible-looking at a glance in a table, and I'd have shipped it if I hadn't tested one more prompt shape.
 
 **Why the draft model failed but ngram succeeded** — I had this wrong at first. I assumed verification was the problem: that small-batch matmul on Polaris made checking 6 tokens cost more than generating them. The ngram result disproves it — verifying a 49-token batch is a clear 3.6x win. The actual problem is the **draft model's own forward passes**: a 0.6B model isn't remotely 10x cheaper than an 8B once this GPU's fixed per-step overhead dominates. Cheap drafting is what matters here, not batch verification.
 
@@ -138,7 +149,9 @@ Same mechanism as ngram: the draft head is *inside* the model, so drafting is ne
 
 Two warnings. **Don't raise `n-max`** — acceptance falls, every rejected token is wasted verification, and at `n-max 6` on prose the 4B collapsed to 9.97 tok/s, 42% *below* its own baseline. And **MTP doesn't stack with ngram** — setting `--spec-type ngram-map-k` on an MTP model replaces MTP rather than combining.
 
-Did I switch? **No.** The MTP models have lower baselines, so against my actual 8B + ngram setup the 9B lands at −7% prose, +17% code, −64% echo, and only fits at half the context (5.47 GB leaves no room for 8192). MTP is clearly a good technique; these particular models just don't beat what I have.
+Did I switch? **No.** The MTP models have lower baselines, so against a correct 8B baseline (15.3 tok/s, no speculation) the 9B lands at −7% prose, +17% code, and only fits at half the context (5.47 GB leaves no room for 8192). MTP is clearly a good technique; these particular models just don't beat what I have.
+
+Worth adding: unlike ngram, **MTP produced valid output in every sample I took** — the code answers all started with real Python. But I didn't put it through the same 6-runs-per-prompt corruption check, so I'd validate before trusting it on this GPU.
 
 **Prompt caching, by contrast, does most of the real work** — same ~980-token prefix twice: 8.94 s cold → **0.87 s** warm, 964/979 tokens reused. The first long paste hurts; the rest of the conversation doesn't.
 
