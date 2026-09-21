@@ -8,11 +8,11 @@ Note: this is the top 2017 config (i7-7700K + Radeon Pro 580 8 GB), and the
 
 ---
 
-**Title:** A $250 27" 5K iMac is still a great machine in 2026 — and it runs small local models fine. Numbers + five config traps
+**Title:** A $250 27" 5K iMac (2017) is still a great machine — and it runs small local models fine. Numbers + five config traps
 
 ---
 
-The 27" 5K iMac (2017) is worth $250 on its own merits — 5K display, 64 GB of upgradeable RAM, a complete machine. I bought one and then spent a day finding out how well it runs local models. Short answer: small ones run well, and there are some traps.
+The 27" 5K iMac (2017) is worth $250 on its own merits — 5K display, 64 GB of upgradeable RAM, a complete machine. I picked mine up on Facebook Marketplace and then spent a day finding out how well it runs local models. Short answer: small ones run well, and there are some traps.
 
 Posting the numbers because I couldn't find any.
 
@@ -54,7 +54,7 @@ GPU is 3.2x CPU. Docker costs Ollama a third of its CPU speed.
 
 This is a good computer at $250 whether or not you ever run a model on it:
 
-- **27" 5K display.** 5120x2880, 218 PPI, P3. Still excellent in 2026.
+- **27" 5K display.** 5120x2880, 218 PPI, P3. Still an excellent panel.
 - **64 GB RAM, user-upgradeable.** Hatch above the power port, four SO-DIMM slots, five minutes.
 - **A complete machine.** i7, 1 TB NVMe, keyboard, trackpad. Nothing to build.
 
@@ -173,15 +173,18 @@ Also: **Windows 11 isn't supported on this hardware.** i7-7700K is 7th-gen, and 
 
 ## Before you buy one
 
-- **It can't be an external display for another machine.** Target Display Mode ended with the 2014 models.
-- **Check the storage.** Fusion Drive and plain-HDD configs exist and listings often don't say. GGUFs are big — mine is NVMe at 2,062 MB/s.
-- **Confirm it's the 27".** Only that one has upgradeable RAM.
+These turn up on Facebook Marketplace and local classifieds regularly — that's where mine came from. Things to check before handing over cash:
+
+- **Confirm it's the 27", not the 21.5".** Only the 27" has upgradeable RAM.
+- **Check the storage.** Fusion Drive and plain-HDD configs exist and listings often don't say which. Mine is NVMe at 2,062 MB/s. A Fusion config means a long wait every time you load a model.
+- **Check the GPU.** Radeon Pro 570/575/580 all exist. The 580 is the 8 GB one.
+- **It can't be an external display for another machine.** Target Display Mode ended with the 2014 models, so it's a whole computer or nothing.
 
 Otherwise it's a 2017 machine: no warranty, glossy screen, audible fans.
 
 ---
 
-**Verdict:** buy it because a 27" 5K machine with 64 GB of RAM for $250 is a good deal in 2026. Small models on top are a genuine bonus — 15 tok/s on an 8B, 20 on a 4B — once you get past a dead driver, a broken FA kernel, a corrupting speculation setting and two bad llama-server defaults. Not an LLM rig. A good cheap computer that also does this.
+**Verdict:** buy it because a 27" 5K machine with 64 GB of RAM for $250 is a good deal. Small models on top are a genuine bonus — 15 tok/s on an 8B, 20 on a 4B — once you get past a dead driver, a broken FA kernel, a corrupting speculation setting and two bad llama-server defaults. Not an LLM rig. A good cheap computer that also does this.
 
 Everything — scripts, flags, every negative result: **https://github.com/hyper07/imac-llm**
 
