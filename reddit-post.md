@@ -54,6 +54,30 @@ GPU is 3.2x CPU on the 8B. **Docker costs Ollama a third of its CPU speed** (WSL
 
 ---
 
+## Is $250 actually good value for LLM work?
+
+Straight answer: **not if you only care about tokens per second.** Worth being honest since that's what this sub optimises for.
+
+| Option | ~Price | 8B generation | What you actually get |
+|---|---|---|---|
+| **This iMac (2017)** | **$250** | **15.3 tok/s** (measured) | Whole computer + 5K display + 64 GB RAM + 1 TB NVMe |
+| Used RX 6600 8 GB | ~$180 | faster — has fp16 | GPU only. Needs PC, PSU, case |
+| Used RTX 3060 12 GB | ~$194–280 | faster, CUDA, 12 GB VRAM | GPU only. Needs PC, PSU, case |
+| Mac Mini M4 16 GB | $599 new | ~28–35 tok/s | Whole computer, no display, 16 GB ceiling |
+
+A used RTX 3060 beats this on raw inference and costs about the same — **but it's a bare card**. Put it in a $200 second-hand tower and you're at $450+ with no monitor, and you've spent more than I did for a machine that does one thing better.
+
+So the actual pitch isn't "cheap LLM box". It's: **if you want a 5K display anyway, the LLM capability is free.** A new 5K panel alone starts at ~$600. At $250 the monitor already justifies the purchase; the i7, the 8 GB Radeon, 64 GB of RAM and a 1 TB NVMe are what's left over.
+
+Two things this setup wins on outright:
+
+- **64 GB of RAM, user-upgradeable.** A 12 GB 3060 simply cannot load a 70B model. This can — on CPU, at ~1 tok/s, which is miserable but non-zero. The RAM ceiling is 4 SO-DIMM slots and five minutes of work.
+- **It's a complete, quiet, assembled machine** with a display, keyboard and trackpad, not a project.
+
+And what it loses on: **8 GB of VRAM is the hard ceiling.** The 8B at Q4 with 8192 context already uses ~5.6 GB of it, and the 5K desktop eats another 1.6 GB. There's no headroom for a 13B, and no fp16 units to make what's there run faster.
+
+---
+
 ## The five config traps
 
 Each of these cost real time and none are obvious from the docs.
@@ -157,6 +181,35 @@ Worth adding: unlike ngram, **MTP produced valid output in every sample I took**
 
 ---
 
+## Everything measured, in one table
+
+For anyone comparing against their own hardware. Qwen3-8B Q4_K_M unless noted, `--parallel 1`, greedy:
+
+| What | Prompt tok/s | Generation tok/s |
+|---|---|---|
+| **GPU, production config** | **113** | **15.3** |
+| GPU, `llama-bench` synthetic | 128 | 16.5 |
+| GPU, Ollama native (its FA works) | 111 | 16.7 |
+| GPU, flash attn on (corrupts) | 45 | 16–17 |
+| GPU, 4B model | 235 | 20.5 |
+| GPU, Qwen3.5-4B-MTP `n-max 2` | — | 21.9 (code) |
+| GPU, Qwen3.5-9B-MTP `n-max 2` | — | 18.1 (code) |
+| GPU, Qwen3.5-2B-MTP | — | 14.1 |
+| CPU, 4 threads | 19.1 | 5.2 |
+| CPU, Ollama native | 22.1 | 4.5 |
+| Docker/WSL `-ngl 99` (no GPU) | 18.4 | 5.3 |
+| Ollama in Docker | 11.0 | 3.4 |
+
+Things that made **no difference**: `-ub` micro-batch tuning (512 already optimal), prompt size (flat 112→128 tok/s from 128 to 2048 tokens), Q8_0 vs Q4_K_M (+5% prompt, −12% generation, +71% VRAM).
+
+Things that made it **worse**: draft-model speculation (−24 to −63%), `ngram-cache` on prose (−16%), MTP at `n-max 6` (−42%), the default 4 KV slots once four conversations are open (−24%).
+
+Things that **corrupted output**: flash attention, ngram speculation.
+
+The pattern across all of it: on a GPU with no fp16, no int-dot and no matrix cores, anything that batches work is either slow or wrong. The only real wins were removing stalls, not adding throughput.
+
+---
+
 ## Prompt processing is the real ceiling
 
 128 tok/s, and it doesn't move. **The Pro 580 has no fp16 math at all** — Vulkan reports `shaderFloat16 = false`, llama.cpp reports `fp16: 0 | bf16: 0 | int dot: 0 | matrix cores: none`. Polaris is GCN 4; packed half-precision arrived with Vega, so anything half-precision here is widened and executed as fp32 at best. With no fp16, no bf16, no DP4A and no matrix cores, every Q4_K block is unpacked to fp32 in-shader and multiplied with plain ALU math. ~6.2 TFLOPS against ~16.4 GFLOP/token puts the theoretical ceiling near 380 tok/s; 128 is about 34% of that, which is normal for a dequantize-in-shader path.
@@ -198,9 +251,9 @@ RAM is user-upgradeable on the 27" (not the 21.5"): a hatch above the power port
 
 Downsides are what you'd expect from a 2017 machine: no warranty, glossy screen, audible fans under load, and 8 GB of VRAM that the 5K display is already eating into — llama-server holds ~5.6 GB of it, so 8192 context is about the ceiling.
 
-**Verdict:** ~16.7 tok/s on an 8B for $250, once you get past a dead driver, a broken FA kernel, and two llama-server defaults that are wrong for single-user use. If you want something that works out of the box, buy something else.
+**Verdict:** ~15 tok/s on an 8B for $250, once you get past a dead driver, a broken FA kernel, a corrupting speculation setting, and two llama-server defaults that are wrong for single-user use. If you want something that works out of the box, buy something else.
 
-The thing that makes the risk asymmetric, though: a new 5K panel on its own starts around $600. At $250 the display alone already covers the purchase, so the worst realistic outcome is that you own a very good monitor and the LLM side disappoints. Mine didn't.
+Don't buy it *for* the LLM performance — a used RTX 3060 beats it for similar money if you already own a PC. Buy it if you want a 5K display, because a new 5K panel alone starts around $600. At $250 the monitor covers the purchase on its own, so the worst realistic outcome is that you own a very good display and the inference side disappoints. Mine didn't, but it took a full day of debugging to get there, and I've put every flag and every negative result in the repo so the next person doesn't have to repeat it.
 
 Scripts with all the flags baked in, the long-form write-up and the exact `llama-bench` / API commands used for every number above: **https://github.com/hyper07/imac-llm** — happy to answer questions or run extra benchmarks if anyone wants a specific model tested.
 

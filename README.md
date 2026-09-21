@@ -359,8 +359,30 @@ no-op `--spec-type` gives when left at its default:
 
 ```
 common_speculative_init_result: failed to create MTP context
-srv    load_model: failed to create MTP context
+llama_init_from_model: context type MTP requested but model doesn't contain MTP layers
 ```
+
+##### Confirming a GGUF really has MTP
+
+A filename containing `MTP` is not proof. Load the model with `-v` and look for
+the `nextn` metadata key and tensors — `--list-devices` exits before tensors
+load, so it cannot tell you this:
+
+```powershell
+.\llama-server.exe --model models\<file>.gguf --list-devices -v   # WRONG - exits too early
+```
+
+```
+llama_model_loader: - kv 32:  qwen35.nextn_predict_layers u32 = 1
+print_info: n_layer     = 24
+print_info: n_layer_all = 25                       <- one extra layer: the MTP head
+create_tensor: loading tensor blk.24.nextn.eh_proj.weight
+create_tensor: loading tensor blk.24.nextn.enorm.weight
+```
+
+`n_layer_all` exceeding `n_layer` by the number of `nextn_predict_layers`, plus
+`blk.<n>.nextn.*` tensors, is the signature. Verified present on the Qwen3.5
+2B, 4B and 9B MTP builds and absent on Qwen3-8B.
 
 MTP-equipped GGUFs do exist though, and the Qwen3.5 family publishes them down
 to 0.8B. Tested `unsloth/Qwen3.5-4B-MTP-GGUF` Q4_K_M (2.64 GiB — the extra over
@@ -426,6 +448,13 @@ Unlike ngram, **MTP produced correct output in every sample taken** — the code
 answers all began with valid Python — but it was not put through the same
 6-run-per-prompt corruption check, so validate it yourself before trusting it.
 The models are kept in `models\` for re-testing.
+
+The **2B is not worth trying**: baseline 14.12 tok/s, *slower* than the 4B's
+17.15, because fixed per-step overhead dominates at small model sizes on this
+GPU — the same reason the 4B is only 24% faster than the 8B. It also crashed
+with `Invalid input batch` at `--spec-draft-n-max 3`, a setting both larger
+models handled. Its MTP head is genuinely present (`n_layer 24 / n_layer_all
+25`, `blk.24.nextn.*`); the model is simply too small to benefit here.
 
 #### Draft models — 24-63% slower
 
