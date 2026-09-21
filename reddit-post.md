@@ -16,7 +16,7 @@ stock option.
 
 Picked up a 27" 5K iMac (2017) for **$250** and ran a local LLM stack on it properly. Posting the full numbers plus the things that went wrong, because I couldn't find either when I was looking.
 
-For context on that price: the cheapest *new* 27" 5K panel on the market right now is around **$600**, and most sit at $800–1,100+. I paid $250 for a 5120x2880 display **and** a quad-core i7, 8 GB of VRAM, 64 GB of RAM and a 1 TB NVMe attached to the back of it. Even if the machine were a total failure as an LLM box, the monitor alone would have made it worth the money — everything below is upside.
+At $250 this is a 27" 5K display with a quad-core i7, 8 GB of VRAM, 64 GB of RAM and a 1 TB NVMe attached to the back of it. Even if it were useless for inference the display alone would justify it — everything below is upside.
 
 **Hardware:** Core i7-7700K (4c/8t), Radeon Pro 580 8 GB, 64 GB DDR4-2400, 1 TB **PCIe NVMe** SSD (`APPLE SSD SM1024L`, 2,062 MB/s measured unbuffered), Windows 11 Pro via Boot Camp. GPU inference through llama.cpp's Vulkan backend — no ROCm on Polaris.
 
@@ -58,16 +58,7 @@ GPU is 3.2x CPU on the 8B. **Docker costs Ollama a third of its CPU speed** (WSL
 
 The LLM performance is the bonus, not the reason. What justifies the price on its own:
 
-**A 27" 5K display.** 5120x2880, 218 PPI, P3 colour. What a new 5K panel costs today:
-
-| Display | Price |
-|---|---|
-| KTC H27P3 (cheapest genuine 5K) | ~$600 |
-| ViewSonic ColorPro VP2788-5K | ~$800 |
-| BenQ MA270U | ~$1,099 |
-| Apple Studio Display | well north of that |
-
-The **cheapest** new 5K panel is roughly 2.4x what I paid for an entire working computer. At $250 the monitor alone more than covers the purchase — everything else is attached to the back of it for free.
+**A 27" 5K display.** 5120x2880, 218 PPI, P3 colour. Still a genuinely good panel in 2026, and 5K remains a rare and expensive format. It covers the $250 on its own.
 
 **64 GB of RAM, and it's user-upgradeable.** The 27" has a hatch above the power port: four SO-DIMM slots, five minutes, no disassembly. DDR4-2400 SO-DIMMs are cheap. This is the single biggest reason to pick the 27" 2017 over almost any other all-in-one — and it means you can load models far larger than the VRAM allows and run them on CPU. Slowly, but at all.
 
@@ -243,7 +234,7 @@ Otherwise it's what you'd expect from a 2017 machine: no warranty, glossy screen
 
 **Verdict:** ~15 tok/s on an 8B for $250, once you get past a dead driver, a broken FA kernel, a corrupting speculation setting, and two llama-server defaults that are wrong for single-user use. If you want something that works out of the box, buy something else.
 
-Buy it for the 5K display and the 64 GB of upgradeable RAM — a new 5K panel alone starts around $600, so at $250 the monitor covers the purchase on its own. The worst realistic outcome is that you own a very good display and the inference side disappoints. Mine didn't, but it took a full day of debugging to get there, and I've put every flag and every negative result in the repo so the next person doesn't have to repeat it.
+Buy it for the 5K display and the 64 GB of upgradeable RAM. At $250 the worst realistic outcome is that you own a very good display and the inference side disappoints. Mine didn't, but it took a full day of debugging to get there, and I've put every flag and every negative result in the repo so the next person doesn't have to repeat it.
 
 Scripts with all the flags baked in, the long-form write-up and the exact `llama-bench` / API commands used for every number above: **https://github.com/hyper07/imac-llm** — happy to answer questions or run extra benchmarks if anyone wants a specific model tested.
 
