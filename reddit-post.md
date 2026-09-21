@@ -39,12 +39,14 @@ Qwen3-8B Q4_K_M, identical 961-token prompt through each server's own API, 128 t
 
 Scale across models and backends (`llama-bench` for llama.cpp, API timings for Ollama — see the harness note at the end):
 
-| Model | GPU | CPU (4 threads) | Ollama CPU | Ollama in Docker |
-|---|---|---|---|---|
-| Qwen3-8B Q4_K_M | 16.5 tok/s | 5.2 | 4.5 | 3.4 |
-| Qwen3-4B Q4_K_M | 20.5 tok/s | 9.5 | 7.5 | 5.1 |
+| Model | GPU | CPU (4 threads) | Ollama CPU | Docker/WSL `-ngl 99` | Ollama in Docker |
+|---|---|---|---|---|---|
+| Qwen3-8B Q4_K_M | 16.5 tok/s | 5.2 | 4.5 | 5.3 | 3.4 |
+| Qwen3-4B Q4_K_M | 20.5 tok/s | 9.5 | 7.5 | 9.7 | 5.1 |
 
-GPU is 3.2x CPU on the 8B. **Docker costs Ollama a third of its CPU speed** (WSL2 VM), and Docker Desktop can't pass an AMD GPU into a Linux container at all — so the model server runs natively and only the web UI gets containerized.
+GPU is 3.2x CPU on the 8B. **Docker costs Ollama a third of its CPU speed** (WSL2 VM).
+
+**And no, you can't containerize the GPU on Windows** — I tried properly. You *can* pass `--device /dev/dxg` into a container and mount `/usr/lib/wsl`, so the GPU is reachable. But that channel is D3D12, not Vulkan; translating needs Mesa's Dozen driver (`dzn`), which isn't packaged in Ubuntu or Debian, and RADV needs a `/dev/dri` node that doesn't exist under WSL. The only Vulkan device is `llvmpipe`, a CPU rasterizer, and `llama-server --list-devices` returns `(none)`. It fails **silently**: with `-ngl 99` llama-bench still prints `backend = Vulkan` and hands you 5.28 tok/s, which is CPU speed (native CPU: 5.20), not the 16.5 of the real GPU. On Linux this works fine via `/dev/dri` — it's specifically a Windows limitation.
 
 **16.7 tok/s is faster than reading speed.** This machine is genuinely usable as a daily chat box.
 
@@ -111,7 +113,9 @@ Negative results, all measured:
 
 ## Prompt processing is the real ceiling
 
-128 tok/s, and it doesn't move. Polaris has no fp16, no integer dot product and no matrix cores, so every Q4_K block is unpacked to fp32 in-shader and multiplied with plain fp32 ALU math. ~6.2 TFLOPS against ~16.4 GFLOP/token puts the theoretical ceiling near 380 tok/s; 128 is about 34% of that, which is normal for a dequantize-in-shader path.
+128 tok/s, and it doesn't move. **The Pro 580 has no fp16 math at all** — Vulkan reports `shaderFloat16 = false`, llama.cpp reports `fp16: 0 | bf16: 0 | int dot: 0 | matrix cores: none`. Polaris is GCN 4; packed half-precision arrived with Vega, so anything half-precision here is widened and executed as fp32 at best. With no fp16, no bf16, no DP4A and no matrix cores, every Q4_K block is unpacked to fp32 in-shader and multiplied with plain ALU math. ~6.2 TFLOPS against ~16.4 GFLOP/token puts the theoretical ceiling near 380 tok/s; 128 is about 34% of that, which is normal for a dequantize-in-shader path.
+
+Worth keeping straight, since people conflate them: `shaderFloat16` (fp16 **math**) is permanently false in this silicon, while `storageBuffer16BitAccess` (16-bit **storage**) is what llama.cpp actually requires — and that is what Apple's 2020 driver failed to expose. Missing fp16 math costs speed; missing 16-bit storage stopped it running at all. Anyone telling you "Polaris can't do it" is usually mixing these two up.
 
 Practically: a 4,000-token document takes ~30 s before the first word. Fine for chat, annoying for long-document RAG. The 4B is 1.8x faster at this specific task (235 tok/s) if you paste a lot.
 

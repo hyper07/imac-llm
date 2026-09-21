@@ -111,17 +111,24 @@ is in *What the numbers say*; these tables are kept for the CPU columns and the
 
 ### Generation speed (tokens/sec — higher is better)
 
-| Model | llama.cpp GPU (bench) | Ollama native GPU (FA on) | llama.cpp CPU | Ollama native CPU | Ollama Docker CPU |
-|---|---|---|---|---|---|
-| **Qwen3-8B** Q4_K_M | 16.48 | 16.73 | 5.20 | 4.53 | 3.36 |
-| **Qwen3-4B** Q4_K_M | 20.51 | 20.82 | 9.50 | 7.53 | 5.07 |
+| Model | llama.cpp GPU (bench) | Ollama native GPU (FA on) | llama.cpp CPU | Ollama native CPU | llama.cpp Docker/WSL `-ngl 99` | Ollama Docker CPU |
+|---|---|---|---|---|---|---|
+| **Qwen3-8B** Q4_K_M | 16.48 | 16.73 | 5.20 | 4.53 | 5.28 | 3.36 |
+| **Qwen3-4B** Q4_K_M | 20.51 | 20.82 | 9.50 | 7.53 | 9.70 | 5.07 |
 
 ### Prompt processing (tokens/sec)
 
-| Model | llama.cpp GPU (bench) | Ollama native GPU (FA on) | llama.cpp CPU | Ollama native CPU | Ollama Docker CPU |
-|---|---|---|---|---|---|
-| **Qwen3-8B** Q4_K_M | 128.33 | 110.19 | 19.14 | 22.13 | 11.00 |
-| **Qwen3-4B** Q4_K_M | 235.16 | 187.55 | 35.42 | 43.53 | 20.85 |
+| Model | llama.cpp GPU (bench) | Ollama native GPU (FA on) | llama.cpp CPU | Ollama native CPU | llama.cpp Docker/WSL `-ngl 99` | Ollama Docker CPU |
+|---|---|---|---|---|---|---|
+| **Qwen3-8B** Q4_K_M | 128.33 | 110.19 | 19.14 | 22.13 | 18.37 | 11.00 |
+| **Qwen3-4B** Q4_K_M | 235.16 | 187.55 | 35.42 | 43.53 | 34.29 | 20.85 |
+
+**The Docker/WSL column is not GPU acceleration**, despite asking for `-ngl 99`
+with the Vulkan build. Compare it with the plain CPU column: 5.28 against 5.20,
+and 9.70 against 9.50. It is CPU inference, and llama-bench still labels the
+backend `Vulkan` while doing it. On Windows the GPU cannot be reached from a
+container at all — see *Why WSL2 or Docker on Windows is not a shortcut* in
+[OTHER-OS.md](OTHER-OS.md).
 
 ### What the numbers say
 
@@ -186,12 +193,33 @@ reports its capabilities as:
 Radeon Pro 580 | fp16: 0 | bf16: 0 | int dot: 0 | matrix cores: none
 ```
 
-All four of the accelerations llama.cpp's Vulkan backend would normally use are
-absent, so every Q4_K block is dequantised to **fp32** in the shader and
-multiplied with plain fp32 ALU math. The RX 580's ~6.2 TFLOPS fp32 against
-~16.4 GFLOP per token for an 8B model gives a theoretical ceiling near 380
-tok/s; 128 tok/s is about 34% of that, which is normal efficiency for a
-dequantise-in-shader path with no matrix units.
+**The Pro 580 has no fp16 math at all.** Vulkan confirms it independently:
+`shaderFloat16 = false` and `shaderInt16 = false`. Polaris (GCN 4) has no
+packed half-precision units — the 2:1 fp16 rate arrived with Vega. Every
+half-precision value is therefore widened and computed as fp32, so the card
+does half-precision work at *best* fp32 speed, and modern inference kernels
+built around fp16 throughput have nothing to run on. Combined with no bf16, no
+integer dot product (`DP4A`) and no matrix cores, all four of the
+accelerations llama.cpp's Vulkan backend would normally reach for are absent:
+every Q4_K block is unpacked to fp32 in the shader and multiplied with plain
+fp32 ALU math.
+
+Do not confuse this with the driver problem in *GPU status* above. Those are
+different things and the distinction matters:
+
+| | Meaning | On this card |
+|---|---|---|
+| `shaderFloat16` | fp16 **arithmetic** | **false — absent in the silicon, permanently** |
+| `storageBuffer16BitAccess` | 16-bit **storage** | true on the R6.4 driver, false on Apple's 2020 one |
+
+llama.cpp requires the second and does **not** require the first. That is why
+the 2020 driver blocked it entirely while the missing fp16 math only costs
+speed.
+
+The RX 580's ~6.2 TFLOPS fp32 against ~16.4 GFLOP per token for an 8B model
+gives a theoretical ceiling near 380 tok/s; 128 tok/s is about 34% of that,
+which is normal efficiency for a dequantise-in-shader path with no matrix
+units.
 
 It is a hardware ceiling, not a misconfiguration — two measurements confirm it:
 
