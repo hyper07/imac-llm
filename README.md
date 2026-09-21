@@ -24,7 +24,13 @@ worth avoiding.
 Open WebUI runs in Docker and reaches the natively-running llama-server via
 `host.docker.internal:8080`. The GPU stays on the Windows side — Docker Desktop
 cannot pass an AMD GPU into a Linux container, so the model server must run
-natively for GPU acceleration to be possible at all.
+natively for GPU acceleration to be possible at all. (On Linux that limitation
+does not exist and the whole stack can be containerised — see
+**[OTHER-OS.md](OTHER-OS.md)**.)
+
+Thinking of running Linux or macOS on this machine instead?
+**[OTHER-OS.md](OTHER-OS.md)** covers both: why Linux is plausibly faster, and
+why macOS Ventura's Metal backend is a trap on a discrete AMD GPU.
 
 ## Daily use
 
@@ -519,6 +525,7 @@ default, which is part of why it looked faster in mixed use.
 | `install-gpu-driver.cmd` | Launches the AMD R6.4 installer elevated (already done) |
 | `docker-compose.yml` | Open WebUI container definition |
 | `reddit-post.md` | Write-up draft for r/LocalLLaMA; numbers mirror this file |
+| `OTHER-OS.md` | Running the same stack on Linux or macOS Ventura instead |
 | `models\` | GGUF model files |
 | `driver\` | AMD Boot Camp R6.4 installer |
 | `downloads\` | Installers kept locally for a rebuild (see *Software sources*) |
