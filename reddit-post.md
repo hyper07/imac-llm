@@ -1,243 +1,188 @@
 # Reddit post draft
 
-A condensed write-up of the results in [README.md](README.md), aimed at
-r/LocalLLaMA. Every number here is measured on the machine described below; the
-full method, the flags and the negative results are in the README.
+Condensed from [README.md](README.md), aimed at r/LocalLLaMA. All numbers
+measured on the machine below. Full method and negative results in the README.
 
-Note on the hardware: this is the *top* 2017 configuration (i7-7700K + Radeon
-Pro 580 8 GB), and the 64 GB of RAM is an aftermarket upgrade rather than a
-stock option.
+Note: this is the top 2017 config (i7-7700K + Radeon Pro 580 8 GB), and the
+64 GB is an aftermarket upgrade, not stock.
 
 ---
 
-**Title:** Benchmarked a $250 2017 iMac as a local LLM box: 16.7 tok/s on Qwen3-8B, and five config traps that cost me most of a day
+**Title:** A $250 27" 5K iMac is still a great machine in 2026 — and it runs small local models fine. Numbers + five config traps
 
 ---
 
-Picked up a 27" 5K iMac (2017) for **$250** and ran a local LLM stack on it properly. Posting the full numbers plus the things that went wrong, because I couldn't find either when I was looking.
+The 27" 5K iMac (2017) is worth $250 on its own merits — 5K display, 64 GB of upgradeable RAM, a complete machine. I bought one and then spent a day finding out how well it runs local models. Short answer: small ones run well, and there are some traps.
 
-At $250 this is a 27" 5K display with a quad-core i7, 8 GB of VRAM, 64 GB of RAM and a 1 TB NVMe attached to the back of it. Even if it were useless for inference the display alone would justify it — everything below is upside.
+Posting the numbers because I couldn't find any.
 
-**Hardware:** Core i7-7700K (4c/8t), Radeon Pro 580 8 GB, 64 GB DDR4-2400, 1 TB **PCIe NVMe** SSD (`APPLE SSD SM1024L`, 2,062 MB/s measured unbuffered), Windows 11 Pro via Boot Camp. GPU inference through llama.cpp's Vulkan backend — no ROCm on Polaris.
+**Specs:** i7-7700K, Radeon Pro 580 8 GB, 64 GB DDR4, 1 TB NVMe, Windows 11 via Boot Camp. Inference through llama.cpp Vulkan — no ROCm on Polaris.
 
-**Check the storage before you buy one.** The 2017 27" shipped as a Fusion Drive (small SSD cache bolted onto a 5400 rpm spinner), a plain HDD, or a real PCIe NVMe blade SSD. Mine is the NVMe. GGUFs are big — the 8B is 4.7 GB — so a Fusion or HDD config means a long wait every time you cold-load a model, and the listings don't always make it obvious which you're getting. This is the spec people get burned on, more than the CPU.
-
-Launch scripts, the full write-up and every benchmark command are here: **https://github.com/hyper07/imac-llm**
+Scripts and full write-up: **https://github.com/hyper07/imac-llm**
 
 ---
 
-## What you actually get
+## Speed
 
-Qwen3-8B Q4_K_M, identical 961-token prompt through each server's own API, 128 tokens generated, greedy, three runs each. This is served performance, not a synthetic bench:
+Qwen3-8B Q4_K_M, same 961-token prompt through each server's API, greedy:
 
-| Engine | Prompt tok/s | Generation tok/s |
+| Engine | Prompt | Generation |
 |---|---|---|
-| llama.cpp b11063, flash attn off | 113 | 14.3 |
-| llama.cpp b11063, flash attn **on** | 45 | 16–17 *(corrupts output — see #2)* |
-| **Ollama native, defaults** | **111** | **16.7** |
-| Ollama native, `OLLAMA_FLASH_ATTENTION=false` | 114 | 14.4 |
+| llama.cpp | 113 | 14.3 |
+| llama.cpp, flash attn on | 45 | 16–17 *(corrupts — trap 2)* |
+| **Ollama native** | **111** | **16.7** |
+| Ollama, flash attn off | 114 | 14.4 |
 
-**With flash attention off the two engines are identical** (113 vs 114, 14.3 vs 14.4). Unsurprising — Ollama bundles a llama.cpp fork. Ollama's entire 17% lead is its flash-attention kernel, which works on this GPU where upstream's does not.
+With flash attention off the two engines match. Ollama's lead is entirely its FA kernel, which works here where llama.cpp's doesn't.
 
-Scale across models and backends (`llama-bench` for llama.cpp, API timings for Ollama — see the harness note at the end):
+Across models and backends:
 
-| Model | GPU | CPU (4 threads) | Ollama CPU | Docker/WSL `-ngl 99` | Ollama in Docker |
+| Model | GPU | CPU | Ollama CPU | Docker/WSL | Ollama Docker |
 |---|---|---|---|---|---|
-| Qwen3-8B Q4_K_M | 16.5 tok/s | 5.2 | 4.5 | 5.3 | 3.4 |
-| Qwen3-4B Q4_K_M | 20.5 tok/s | 9.5 | 7.5 | 9.7 | 5.1 |
+| Qwen3-8B | 16.5 | 5.2 | 4.5 | 5.3 | 3.4 |
+| Qwen3-4B | 20.5 | 9.5 | 7.5 | 9.7 | 5.1 |
 
-GPU is 3.2x CPU on the 8B. **Docker costs Ollama a third of its CPU speed** (WSL2 VM).
+GPU is 3.2x CPU. Docker costs Ollama a third of its CPU speed.
 
-**And no, you can't containerize the GPU on Windows** — I tried properly. You *can* pass `--device /dev/dxg` into a container and mount `/usr/lib/wsl`, so the GPU is reachable. But that channel is D3D12, not Vulkan; translating needs Mesa's Dozen driver (`dzn`), which isn't packaged in Ubuntu or Debian, and RADV needs a `/dev/dri` node that doesn't exist under WSL. The only Vulkan device is `llvmpipe`, a CPU rasterizer, and `llama-server --list-devices` returns `(none)`. It fails **silently**: with `-ngl 99` llama-bench still prints `backend = Vulkan` and hands you 5.28 tok/s, which is CPU speed (native CPU: 5.20), not the 16.5 of the real GPU. On Linux this works fine via `/dev/dri` — it's specifically a Windows limitation.
+**You can't use the GPU from Docker on Windows.** You can pass `--device /dev/dxg` and mount `/usr/lib/wsl`, but that channel is D3D12, not Vulkan. Mesa's Dozen driver isn't packaged, and RADV needs `/dev/dri`, which doesn't exist under WSL. The only Vulkan device is `llvmpipe` — a CPU rasterizer. It fails silently: `-ngl 99` still prints `backend = Vulkan` and gives you 5.3 tok/s. Works fine on real Linux.
 
-**16.7 tok/s is faster than reading speed.** This machine is genuinely usable as a daily chat box.
-
----
-
-## What $250 actually buys
-
-The LLM performance is the bonus, not the reason. What justifies the price on its own:
-
-**A 27" 5K display.** 5120x2880, 218 PPI, P3 colour. Still a genuinely good panel in 2026, and 5K remains a rare and expensive format. It covers the $250 on its own.
-
-**64 GB of RAM, and it's user-upgradeable.** The 27" has a hatch above the power port: four SO-DIMM slots, five minutes, no disassembly. DDR4-2400 SO-DIMMs are cheap. This is the single biggest reason to pick the 27" 2017 over almost any other all-in-one — and it means you can load models far larger than the VRAM allows and run them on CPU. Slowly, but at all.
-
-**A complete, quiet, assembled machine.** Display, keyboard, trackpad, 1 TB NVMe. Nothing to build, nothing to source, no case or PSU to buy.
-
-The honest limit: **8 GB of VRAM is a hard ceiling.** The 8B at Q4 with 8192 context uses ~5.6 GB of it, and the 5K desktop eats another 1.6 GB. There's no room for a 13B on the GPU, and no fp16 units to make what fits run faster. If your goal is purely maximum tokens per second, this is not that machine — it's a very good display that also happens to run an 8B at reading speed.
+**15 tok/s is faster than reading speed.** Fine as a daily chat box.
 
 ---
 
-## The five config traps
+## What $250 buys
 
-Each of these cost real time and none are obvious from the docs.
+This is a good computer at $250 whether or not you ever run a model on it:
 
-**1. `--cache-ram 0` — an ~11.5 second stall that reports nothing wrong.** llama-server's RAM prompt cache saves a slot's KV state to host memory before reusing that slot with a different continuation: regenerate, an edited message, a chat switch, or any front-end background call. That save is a GPU-to-host readback, and over Vulkan on Polaris it runs at roughly 100 MB/s, so ~1.2 GB of KV takes ~11.5 s — *before the first token*, while `prompt_ms` and `predicted_ms` both look perfectly normal. I found it by diffing wall time against the server's own timers, then spotting the gap between `get_availabl` and `launch_slot_` in the log:
+- **27" 5K display.** 5120x2880, 218 PPI, P3. Still excellent in 2026.
+- **64 GB RAM, user-upgradeable.** Hatch above the power port, four SO-DIMM slots, five minutes.
+- **A complete machine.** i7, 1 TB NVMe, keyboard, trackpad. Nothing to build.
 
-    0.08.990  get_availabl: selected slot by LCP similarity, f_sim_best = 1.000
-    0.20.519  launch_slot_: processing task 41          <- 11.5 s later
+Local inference is an option on top, not the reason to buy.
 
-Disabling it takes that to ~0.15 ms. In-slot prefix caching is a separate mechanism and still works. If your TTFT is randomly terrible on an old AMD card, check this first.
+**Small models are the sweet spot.** 8 GB of VRAM is the real constraint — the 8B at Q4 with 8k context uses 5.6 GB, and the 5K desktop takes another 1.6 GB. Nothing bigger fits. But 4B runs at 20.5 tok/s and the 8B at 15, which is faster than you read. If you want a 13B+ rig, this isn't it. If you want to try local models without buying hardware for it, it's plenty.
 
-**2. `--flash-attn off`, and a quick test will lie to you.** `--flash-attn auto` resolves to *on* here, and the Vulkan FA kernel is intermittently wrong on Polaris. Two failure modes: an endless stream of `?`, and — nastier — fluent, confident text with nothing to do with the prompt. A 961-token repeated sentence came back as *"peggy the cat is a cat who loves to play with balls"*. That one reads like a real answer.
+---
 
-It's non-deterministic and biased toward long prompts. Controlled retest, same server, same day:
+## Five config traps
+
+**1. `--cache-ram 0`.** llama-server's RAM prompt cache saves KV state to host memory before reusing a slot — on regenerate, an edited message, a chat switch, or any front-end background call. Over Vulkan that readback runs at ~100 MB/s, so 1.2 GB of KV stalls **11.5 seconds before the first token**. The server's own timers show nothing wrong. Found it in the gap between `get_availabl` and `launch_slot_` in the log. Disabling it drops the stall to 0.15 ms. In-slot prefix caching still works.
+
+**2. `--flash-attn off`.** `auto` turns FA on, and the Vulkan FA kernel is wrong on Polaris. Two failure modes: endless `?`, and fluent text unrelated to the prompt. A repeated-sentence prompt came back as *"peggy the cat is a cat who loves to play with balls"* — that one reads like a real answer.
+
+Non-deterministic and worse on long prompts:
 
 | Prompt | Pass | Fail |
 |---|---|---|
-| Short chats (≤30 tokens) | 10 | 0 |
-| 961-token raw, caching off | 2 | **2** |
+| Short chats | 10 | 0 |
+| 961-token, caching off | 2 | **2** |
 
-So a handful of clean chats prove nothing. The bait is real — FA is ~20% faster at generation (14.3 → 17.3) — but it also collapses prompt processing from ~113 to ~45 tok/s, so it loses on time-to-first-token too. I isolated it by running the identical model, flags and prompt on the CPU backend, which answered correctly.
+A few clean chats prove nothing. FA is ~20% faster at generation but drops prompt processing from 113 to 45 tok/s, so it loses anyway. Tested b11026, b11063 and b11065 — all corrupt. Ollama's fork was clean on 13/13, so a working Vulkan FA path exists; upstream doesn't have it.
 
-**You can't dodge it by pinning an older build.** I ran the same test on upstream b11026 (Sep 17), b11063 and b11065 (Sep 20): all three corrupted at least one of four long prompts. Ollama's fork was clean on 13/13 including six fresh ~1000-token prompts, with prompt processing intact. A working Vulkan FA path for Polaris exists — upstream just doesn't have it. That's the one concrete reason to run Ollama here instead.
+**3. Your first message may be junk.** Independent of any other setting. With plain flags, the first request after a model load returned repeated garbage (`softsoftsoft...`, `giú ****`, `*[ * * *`) on **2 of 3** fresh boots. Every later request was clean. One boot lost the GPU entirely with `ErrorDeviceLost`. Fix: fire a throwaway request at startup — 0 of 12 real requests corrupt across 4 boots. If your first message looks broken, just send it again.
 
-To verify on your own card: send a ~1000-token repeated-sentence prompt with prompt caching off, at least four times, and require every output to continue the sentence.
+**4. `--parallel 1` if you're the only user.** Default is 4 slots on a shared KV cache, and every decode step attends across all of them:
 
-**3. Your first message after starting the server may come back as junk.** Separate from any speculation setting. With plain flags, the first request after a model load returned repeated garbage — `softsoftsoftsoft...`, `giú ****`, `*[ * * *` — on **2 of 3** fresh boots, while every later request was clean. One boot lost the GPU outright with `vk::Queue::submit: ErrorDeviceLost`, though that was transient and followed heavy benchmark cycling. Fix: have your launcher fire one throwaway request after startup. Across 4 boots with a warm-up, **0 of 12** real requests were corrupt. If you see junk on your first message, just send it again — that's this, not the model.
-
-**4. `--parallel 1` if you're the only user.** llama-server defaults to 4 slots sharing a unified KV cache, and every decode step attends across *all* slots' cached tokens. Each new conversation that lands in a fresh slot slows everything after it, and slots keep their stale KV until restart:
-
-| Config | Prompt 1 | 2 | 3 | 4 |
+| Config | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|
-| 4 slots, unified KV (default) | 14.2 | 13.0 | 12.0 | **10.8** |
+| 4 slots (default) | 14.2 | 13.0 | 12.0 | **10.8** |
 | `--parallel 1` | 14.3 | 14.4 | 14.3 | 14.3 |
 
-−24% by the fourth conversation. In a web UI every new chat is a distinct prompt, so a normal session degrades within minutes. Ollama's runner uses one slot by default, which is part of why it looks faster in mixed use. (`--no-kv-unified` with 4 slots also fixes it but caps each slot at 2048 tokens.)
+−24% by the fourth conversation, and it stays slow until restart. Every new chat takes a slot. This also wrecks benchmarks — send different prompts to a multi-slot server and you're measuring slot fill.
 
-This also poisons benchmarks: if you send several *different* prompts to a multi-slot server you're measuring slot fill, not whatever you think you're testing. It cost me a couple of bogus results before I caught it.
-
-**5. Your front-end is making extra calls.** Open WebUI defaults to generating chat tags and follow-up suggestions after every message, each re-sending the whole conversation as its own prompt pass. That's three passes per message instead of one. Free to turn off.
+**5. Check your front-end's background calls.** Open WebUI generates chat tags and follow-up suggestions after every message, each re-sending the whole conversation. Three prompt passes instead of one. Free to turn off.
 
 ---
 
-## What did NOT help
-
-Negative results, all measured:
+## What didn't work
 
 | Tried | Result |
 |---|---|
-| **Speculative decoding with a draft model** (Qwen3-0.6B, 4 configs) | **24–63% slower.** Acceptance was fine, 61–94% |
-| Q8_0 instead of Q4_K_M | +5.3% prompt, −11.6% generation, +71% VRAM |
-| `-ub` micro-batch tuning | 512 already optimal; 1024 gains 0.2% |
-| Larger prompts amortizing overhead | Flat, 112→128 tok/s from 128 to 2048 tokens |
-| `--spec-type draft-mtp` | Won't start — Qwen3-8B has no MTP heads |
+| Draft-model speculation (0.6B, 4 configs) | 24–63% **slower** |
+| `ngram-map-k` | 3.6x faster, **corrupts output** |
+| Q8_0 instead of Q4_K_M | +5% prompt, −12% generation, +71% VRAM |
+| `-ub` tuning | 512 already optimal |
+| Bigger prompts | Flat, 112→128 tok/s from 128 to 2048 |
 
-**Ngram speculation looks like a huge free win and it silently corrupts output. Don't use it on this hardware.** I nearly shipped this. I'd first tested `ngram-simple` on prose, saw no change, wrote it off; then realised that was the wrong test — ngram drafts by finding repeats of the context, so you need a prompt whose reply reuses the input. On an "echo this passage back" prompt, 160 tokens, greedy, the numbers are spectacular:
+**Ngram speculation nearly shipped.** On an echo prompt it hit 53.9 vs 15.2 tok/s. On three prose prompts it measured 15.36 vs 15.36 — free speed. Then I ran a code prompt:
 
-| `--spec-type` | Echo prompt | Prose prompt |
+| Code prompt, 6 runs | corrupt |
+|---|---|
+| `ngram-map-k` | **6 of 6** |
+| no speculation | **0 of 6** |
+
+Pure `?` at 95/95 draft acceptance — the verifier agreeing with nonsense. **Test output across prompt types, not just tok/s.** Echo and prose both looked perfect.
+
+**MTP works.** It's the only thing that sped up ordinary generation. Needs draft heads in the model — Qwen3-8B has none and refuses to start. Qwen3.5 publishes MTP GGUFs:
+
+| Config | prose | code |
 |---|---|---|
-| none | 15.15 | 15.35 |
-| `ngram-simple` | 46.53 | 15.37 |
-| `ngram-mod` | 24.78 | 15.24 |
-| `ngram-cache` | 30.07 | **12.81** ← avoid |
-| **`ngram-map-k`** | **53.90** | 15.16 |
+| Qwen3.5-4B-MTP `n-max 2` | 17.1 | **21.9** |
+| Qwen3.5-9B-MTP `n-max 2` | 14.3 | **18.1** |
+| Qwen3.5-2B-MTP | 14.1 | 19.2 |
 
-`ngram-map-k` drafts **49 tokens at a time with all 49 accepted — a 3.6x speedup**. I A/B'd it over three varied non-echo prompts to check it wasn't quietly costing anything: **15.36 vs 15.36 tok/s**, byte-identical outputs. Free speed. I enabled it.
++28% (4B) and +57% (9B) on code over their own baselines. Drafting is near-free because the head is inside the model — same reason ngram was fast, unlike a separate draft model.
 
-**Then I ran a code prompt through it.** Pure `?` characters, every time:
+Don't raise `n-max`: acceptance falls and rejected tokens are wasted work. The 4B at `n-max 6` dropped to 9.97 tok/s, 42% below its own baseline.
 
-| Code prompt, 6 runs | corrupt | speed |
-|---|---|---|
-| `--spec-type ngram-map-k` | **6 of 6** | 28.9 tok/s of garbage |
-| no speculation | **0 of 6** | 15.3 tok/s, correct |
-
-100% draft acceptance on the corrupt runs — the verifier is agreeing with nonsense instead of rejecting it. Same signature as the flash-attention bug, which makes me think the batched verification path on Polaris isn't just slow, it's **wrong**.
-
-My benchmarks covered echo and prose. Neither happened to break. A code prompt broke it instantly. **If you try speculative decoding on an old AMD card, check the actual text across several prompt types — not just tok/s.** The failure is silent, plausible-looking at a glance in a table, and I'd have shipped it if I hadn't tested one more prompt shape.
-
-**Why the draft model failed but ngram succeeded** — I had this wrong at first. I assumed verification was the problem: that small-batch matmul on Polaris made checking 6 tokens cost more than generating them. The ngram result disproves it — verifying a 49-token batch is a clear 3.6x win. The actual problem is the **draft model's own forward passes**: a 0.6B model isn't remotely 10x cheaper than an 8B once this GPU's fixed per-step overhead dominates. Cheap drafting is what matters here, not batch verification.
-
-Gotcha if you try draft models: `--spec-type` defaults to `none`, so `-md` alone loads the draft model and silently never uses it. Look for `draft acceptance` in the log.
-
-**MTP is the one thing that speeds up ordinary generation** — worth knowing if you're on a weak GPU. `--spec-type draft-mtp` needs draft heads trained into the model (Qwen3-8B has none; the server refuses to start rather than silently no-op'ing). The Qwen3.5 family publishes MTP GGUFs down to 0.8B, so I tested the 4B and 9B:
-
-| Config | prose | code | echo |
-|---|---|---|---|
-| Qwen3.5-4B-MTP, no spec | 17.15 | 17.05 | 16.70 |
-| Qwen3.5-4B-MTP `n-max 2` | 17.13 | **21.89** (83% acc) | 24.20 |
-| Qwen3.5-4B-MTP `n-max 6` | **9.97** | 16.97 | 28.69 |
-| Qwen3.5-9B-MTP `n-max 2` | 14.28 | **18.13** (89% acc) | 19.47 |
-
-Same mechanism as ngram: the draft head is *inside* the model, so drafting is near-free. +28% on code for the 4B, +57% for the 9B over their own baselines — real gains on normal generation, not just the echo case.
-
-Two warnings. **Don't raise `n-max`** — acceptance falls, every rejected token is wasted verification, and at `n-max 6` on prose the 4B collapsed to 9.97 tok/s, 42% *below* its own baseline. And **MTP doesn't stack with ngram** — setting `--spec-type ngram-map-k` on an MTP model replaces MTP rather than combining.
-
-Did I switch? **No.** The MTP models have lower baselines, so against a correct 8B baseline (15.3 tok/s, no speculation) the 9B lands at −7% prose, +17% code, and only fits at half the context (5.47 GB leaves no room for 8192). MTP is clearly a good technique; these particular models just don't beat what I have.
-
-Worth adding: unlike ngram, **MTP produced valid output in every sample I took** — the code answers all started with real Python. But I didn't put it through the same 6-runs-per-prompt corruption check, so I'd validate before trusting it on this GPU.
-
-**Prompt caching, by contrast, does most of the real work** — same ~980-token prefix twice: 8.94 s cold → **0.87 s** warm, 964/979 tokens reused. The first long paste hurts; the rest of the conversation doesn't.
+I didn't switch. These models have lower baselines, so the 9B lands at −7% prose / +17% code against the plain 8B, and only fits at half the context. The 2B is pointless — slower than the 4B, because fixed overhead dominates at small sizes.
 
 ---
 
-## Everything measured, in one table
+## Everything measured
 
-For anyone comparing against their own hardware. Qwen3-8B Q4_K_M unless noted, `--parallel 1`, greedy:
+Qwen3-8B Q4_K_M unless noted, `--parallel 1`, greedy:
 
-| What | Prompt tok/s | Generation tok/s |
+| Config | Prompt | Generation |
 |---|---|---|
-| **GPU, production config** | **113** | **15.3** |
-| GPU, `llama-bench` synthetic | 128 | 16.5 |
-| GPU, Ollama native (its FA works) | 111 | 16.7 |
-| GPU, flash attn on (corrupts) | 45 | 16–17 |
-| GPU, 4B model | 235 | 20.5 |
-| GPU, Qwen3.5-4B-MTP `n-max 2` | — | 21.9 (code) |
-| GPU, Qwen3.5-9B-MTP `n-max 2` | — | 18.1 (code) |
-| GPU, Qwen3.5-2B-MTP | — | 14.1 |
+| **GPU, production** | **113** | **15.3** |
+| GPU, `llama-bench` | 128 | 16.5 |
+| GPU, Ollama native | 111 | 16.7 |
+| GPU, 4B | 235 | 20.5 |
 | CPU, 4 threads | 19.1 | 5.2 |
-| CPU, Ollama native | 22.1 | 4.5 |
-| Docker/WSL `-ngl 99` (no GPU) | 18.4 | 5.3 |
-| Ollama in Docker | 11.0 | 3.4 |
+| Docker/WSL | 18.4 | 5.3 |
+| Ollama Docker | 11.0 | 3.4 |
 
-Things that made **no difference**: `-ub` micro-batch tuning (512 already optimal), prompt size (flat 112→128 tok/s from 128 to 2048 tokens), Q8_0 vs Q4_K_M (+5% prompt, −12% generation, +71% VRAM).
-
-Things that made it **worse**: draft-model speculation (−24 to −63%), `ngram-cache` on prose (−16%), MTP at `n-max 6` (−42%), the default 4 KV slots once four conversations are open (−24%).
-
-Things that **corrupted output**: flash attention, ngram speculation.
-
-The pattern across all of it: on a GPU with no fp16, no int-dot and no matrix cores, anything that batches work is either slow or wrong. The only real wins were removing stalls, not adding throughput.
+The pattern: on a GPU with no fp16, no int-dot and no matrix cores, anything that batches work is either slow or wrong. Every real win came from removing stalls, not adding throughput.
 
 ---
 
-## Prompt processing is the real ceiling
+## Prompt processing is the ceiling
 
-128 tok/s, and it doesn't move. **The Pro 580 has no fp16 math at all** — Vulkan reports `shaderFloat16 = false`, llama.cpp reports `fp16: 0 | bf16: 0 | int dot: 0 | matrix cores: none`. Polaris is GCN 4; packed half-precision arrived with Vega, so anything half-precision here is widened and executed as fp32 at best. With no fp16, no bf16, no DP4A and no matrix cores, every Q4_K block is unpacked to fp32 in-shader and multiplied with plain ALU math. ~6.2 TFLOPS against ~16.4 GFLOP/token puts the theoretical ceiling near 380 tok/s; 128 is about 34% of that, which is normal for a dequantize-in-shader path.
+128 tok/s, and it doesn't move. **The Pro 580 has no fp16 math at all** — `shaderFloat16 = false`, and llama.cpp reports `fp16: 0 | bf16: 0 | int dot: 0 | matrix cores: none`. Polaris is GCN 4; packed half-precision came with Vega. Every Q4_K block is unpacked to fp32 in-shader.
 
-Worth keeping straight, since people conflate them: `shaderFloat16` (fp16 **math**) is permanently false in this silicon, while `storageBuffer16BitAccess` (16-bit **storage**) is what llama.cpp actually requires — and that is what Apple's 2020 driver failed to expose. Missing fp16 math costs speed; missing 16-bit storage stopped it running at all. Anyone telling you "Polaris can't do it" is usually mixing these two up.
+Keep these straight: `shaderFloat16` (fp16 **math**) is permanently false here. `storageBuffer16BitAccess` (16-bit **storage**) is what llama.cpp actually needs, and that's what the old driver was missing. People conflate them and conclude Polaris can't run this.
 
-Practically: a 4,000-token document takes ~30 s before the first word. Fine for chat, annoying for long-document RAG. The 4B is 1.8x faster at this specific task (235 tok/s) if you paste a lot.
+A 4,000-token document takes ~30 s before the first word. Fine for chat, annoying for RAG. The 4B is 1.8x faster at this.
+
+Prompt caching does the real work: same 980-token prefix twice, 8.94 s cold → **0.87 s** warm.
 
 ---
 
-## Before any of this works: the driver
+## The driver blocks everything first
 
-Apple's Boot Camp GPU driver is from **July 2020** and blocks Vulkan outright. It advertises `VK_KHR_16bit_storage` but doesn't expose `storageBuffer16BitAccess`, so llama.cpp refuses to load:
+Apple's Boot Camp driver is from July 2020 and kills Vulkan outright:
 
     ggml_vulkan: device Vulkan0 does not support 16-bit storage
 
-This is **not** a Polaris hardware limit — you'll see people claim the card can't do it, conflating it with `shaderFloat16`, which Polaris genuinely lacks and llama.cpp doesn't need. Install **AMD's Boot Camp Unified Driver R6.4** (Aug 2025), which officially lists this iMac. Driver 26.20.13001 → 30.0.13045, Vulkan 1.1.113 → 1.2.196, and the GPU works.
+This is **not** a hardware limit. Install **AMD's Boot Camp Unified Driver R6.4** (Aug 2025), which lists this iMac. Driver goes 26.20.13001 → 30.0.13045, Vulkan 1.1.113 → 1.2.196, and it works.
 
-Also note **Windows 11 isn't supported on this hardware** — the i7-7700K is 7th-gen (Win11 wants 8th+) and Intel Macs have no TPM 2.0. I bypassed the install check. Runs fine, but you're off the supported path.
+Also: **Windows 11 isn't supported on this hardware.** i7-7700K is 7th-gen, and Intel Macs have no TPM 2.0. I bypassed the check. Runs fine, but you're off the supported path.
 
 ---
 
 ## Before you buy one
 
-Three things worth knowing that aren't obvious from a listing:
+- **It can't be an external display for another machine.** Target Display Mode ended with the 2014 models.
+- **Check the storage.** Fusion Drive and plain-HDD configs exist and listings often don't say. GGUFs are big — mine is NVMe at 2,062 MB/s.
+- **Confirm it's the 27".** Only that one has upgradeable RAM.
 
-- **It can't be used as an external display for another machine.** Target Display Mode ended with the 2014 models, so it's a whole computer or nothing. If you're eyeing it purely as a cheap 5K monitor for a laptop, it won't do that.
-- **Check the storage.** Fusion Drive and plain-HDD configs exist and the listings often don't say which you're getting. See above — this is the spec people get burned on.
-- **Confirm it's the 27".** RAM is only user-upgradeable on the 27", not the 21.5".
-
-Otherwise it's what you'd expect from a 2017 machine: no warranty, glossy screen, audible fans under load.
-
-**Verdict:** ~15 tok/s on an 8B for $250, once you get past a dead driver, a broken FA kernel, a corrupting speculation setting, and two llama-server defaults that are wrong for single-user use. If you want something that works out of the box, buy something else.
-
-Buy it for the 5K display and the 64 GB of upgradeable RAM. At $250 the worst realistic outcome is that you own a very good display and the inference side disappoints. Mine didn't, but it took a full day of debugging to get there, and I've put every flag and every negative result in the repo so the next person doesn't have to repeat it.
-
-Scripts with all the flags baked in, the long-form write-up and the exact `llama-bench` / API commands used for every number above: **https://github.com/hyper07/imac-llm** — happy to answer questions or run extra benchmarks if anyone wants a specific model tested.
+Otherwise it's a 2017 machine: no warranty, glossy screen, audible fans.
 
 ---
 
-*Harness note: the engine-comparison table is like-for-like through each server's API. The model/backend table mixes `llama-bench` (llama.cpp) with API timings (Ollama) — `llama-bench` overstates what you get when serving, 16.5 vs 14.3 on the same flags, so trust the first table for absolute numbers and the second for ratios.*
+**Verdict:** buy it because a 27" 5K machine with 64 GB of RAM for $250 is a good deal in 2026. Small models on top are a genuine bonus — 15 tok/s on an 8B, 20 on a 4B — once you get past a dead driver, a broken FA kernel, a corrupting speculation setting and two bad llama-server defaults. Not an LLM rig. A good cheap computer that also does this.
+
+Everything — scripts, flags, every negative result: **https://github.com/hyper07/imac-llm**
+
+Happy to run benchmarks if anyone wants a specific model tested.
