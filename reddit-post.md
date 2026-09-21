@@ -16,7 +16,9 @@ stock option.
 
 Picked up a 27" 5K iMac (2017) for **$250** and ran a local LLM stack on it properly. Posting the full numbers plus the things that went wrong, because I couldn't find either when I was looking.
 
-**Hardware:** Core i7-7700K (4c/8t), Radeon Pro 580 8 GB, 64 GB DDR4-2400, Windows 11 Pro via Boot Camp. GPU inference through llama.cpp's Vulkan backend — no ROCm on Polaris.
+**Hardware:** Core i7-7700K (4c/8t), Radeon Pro 580 8 GB, 64 GB DDR4-2400, 1 TB **PCIe NVMe** SSD (`APPLE SSD SM1024L`, 2,062 MB/s measured unbuffered), Windows 11 Pro via Boot Camp. GPU inference through llama.cpp's Vulkan backend — no ROCm on Polaris.
+
+**Check the storage before you buy one.** The 2017 27" shipped as a Fusion Drive (small SSD cache bolted onto a 5400 rpm spinner), a plain HDD, or a real PCIe NVMe blade SSD. Mine is the NVMe. GGUFs are big — the 8B is 4.7 GB — so a Fusion or HDD config means a long wait every time you cold-load a model, and the listings don't always make it obvious which you're getting. This is the spec people get burned on, more than the CPU.
 
 Launch scripts, the full write-up and every benchmark command are here: **https://github.com/hyper07/imac-llm**
 

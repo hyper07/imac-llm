@@ -3,8 +3,16 @@
 Stack: **llama.cpp** (native Windows, OpenAI-compatible API) + **Open WebUI** (Docker).
 
 Target machine: iMac (Retina 5K, 27-inch, 2017) — Radeon Pro 580 8 GB,
-Core i7-7700K, 64 GB RAM — running Windows 11 Pro (10.0.26200) under Boot Camp.
+Core i7-7700K, 64 GB RAM, 1 TB PCIe NVMe SSD (`APPLE SSD SM1024L`, measured
+2,062 MB/s unbuffered) — running Windows 11 Pro (10.0.26200) under Boot Camp.
 Download links for every component are in *[Software sources](#software-sources)*.
+
+Storage matters when buying one of these. The 2017 27" shipped in three
+configurations: a **Fusion Drive** (a small SSD cache in front of a 5400 rpm
+spinning disk), a plain hard disk, and a **PCIe NVMe blade SSD**. This machine
+has the NVMe one. Model files are large — the 8B here is 4.7 GiB — so a Fusion
+or spinning configuration adds a long wait on every cold model load and is
+worth avoiding.
 
 | Piece | Where |
 |---|---|
