@@ -137,6 +137,50 @@ services:
       --cache-ram 0 --jinja --reasoning-format deepseek
 ```
 
+### Why WSL2 or Docker on Windows is not a shortcut
+
+Reasonable question: if a Linux container can reach the GPU through `/dev/dri`,
+and Windows 11 exposes GPUs to WSL2, can you skip the reboot and run the Vulkan
+container on Windows? **No.** Tested on this machine:
+
+| Check | Result |
+|---|---|
+| `/dev/dxg` in Ubuntu WSL2 | present |
+| `/usr/lib/wsl/lib` (`libd3d12.so`) | present |
+| `/dev/dri` | **missing** |
+| `amdgpu` kernel module | **not loaded** |
+| Vulkan devices found | **`llvmpipe` only** — a CPU software rasterizer |
+| `llama-server --list-devices` | **`(none)`** |
+
+The GPU *is* paravirtualised into WSL2, but that channel speaks **D3D12**, not
+Vulkan. Translating Vulkan onto it needs Mesa's Dozen driver (`dzn`), which
+Ubuntu's `mesa-vulkan-drivers` does not ship — the installed ICDs are RADV,
+Intel, lavapipe and friends, and RADV needs the `/dev/dri` node that does not
+exist here. So the only Vulkan implementation available is lavapipe on the CPU,
+and llama.cpp rejects it outright.
+
+**The dangerous part is that it fails silently.** With `-ngl 99` and the Vulkan
+build, llama-bench still prints `backend = Vulkan` and runs anyway — on the CPU:
+
+```
+| qwen3 8B Q4_K - Medium | Vulkan | ngl 99 | pp512 | 18.37 |
+| qwen3 8B Q4_K - Medium | Vulkan | ngl 99 | tg128 |  5.28 |
+```
+
+18.37 / 5.28 tok/s is native Windows CPU speed (19.14 / 5.20), not GPU speed
+(128 / 16.5). Nothing errors; `-ngl 99` is simply ignored. If you try this,
+check `--list-devices` first — `(none)` is the tell.
+
+| Where llama.cpp runs | Prompt tok/s | Generation tok/s |
+|---|---|---|
+| Windows native, GPU | 128 | **16.5** |
+| **WSL2 / Docker on Windows, `-ngl 99`** | 18.4 | **5.3** |
+| Windows native, CPU | 19.1 | 5.2 |
+| Ollama in Docker (CPU) | 11.0 | 3.4 |
+
+Running Linux on the metal is what unlocks the GPU-in-a-container setup above.
+Under WSL2 it is CPU inference with extra steps.
+
 ### Cheapest way to find out: a live USB
 
 No install, nothing written to disk. Boot Fedora or Ubuntu from USB — RADV
@@ -151,12 +195,75 @@ Windows partition read-only, download the Vulkan tarball, and run:
 An hour, zero commitment, and it answers all three questions: does RADV close
 the bandwidth gap, does flash attention work, and does the 5K panel come up.
 
-### Known rough edges on this hardware
+### Hardware drivers: audio and networking
+
+These are the two that people most often cannot find. Identified from the live
+Windows install on this machine (iMac18,3), so the IDs are exact rather than
+generic Mac advice — check yours with `lspci -nn` and `lsusb` before assuming
+they match.
+
+| Device | Windows driver in use | Hardware ID | Linux driver | Works out of the box? |
+|---|---|---|---|---|
+| **Ethernet** | Broadcom NetXtreme 214.0.0.1 (2018) | PCI `14e4:1686` — BCM57766 | `tg3` | **Yes**, in-kernel |
+| **Wi-Fi** | Broadcom 802.11ac 7.77.119.0 (2020) | PCI `14e4:43ba` — BCM43602 | `brcmfmac` | Needs firmware + a kernel flag |
+| **Audio** | Cirrus Logic CS8409 6.6001.3.38 (2017) | HDA `1013:8409`, subsys `106b` (Apple) | `snd_hda_codec_cs8409` | **Usually not** — see below |
+| **HDMI/DP audio** | AMD HD Audio 10.0.1.21 | HDA `1002:aa01` | `snd_hda_intel` | Yes |
+| **Bluetooth** | Apple Broadcom 6.1.6700.0 (2016) | USB `05ac:8296` | `btbcm` / `hci_bcm` | Usually, sometimes needs firmware |
+| **Webcam** | FaceTime HD | USB `05ac:8511` | `facetimehd` (out-of-tree) | No — build the module |
+
+**Ethernet — nothing to do.** `tg3` is in every mainline kernel. If networking
+works before Wi-Fi does, this is why; use it to fetch everything else.
+
+**Wi-Fi — driver is in-kernel, firmware is not.** `brcmfmac` handles BCM43602,
+but the firmware blob ships separately:
+
+```bash
+sudo apt install firmware-brcm80211      # Debian/Ubuntu
+sudo dnf install linux-firmware          # Fedora
+```
+
+Firmware source: <https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/brcm>
+
+The known quirk for this exact PCI ID is a feature flag — without it the
+adapter may associate and then drop:
+
+```bash
+# /etc/modprobe.d/brcmfmac.conf
+options brcmfmac feature_disable=0x82000
+```
+
+Some Macs also want an NVRAM `.txt` next to the firmware
+(`brcmfmac43602-pcie.txt`) carrying the adapter's MAC. It is not distributed
+with linux-firmware. Background: <https://wiki.archlinux.org/title/Broadcom_wireless>
+
+Note this is **not** one of the chips needing Broadcom's proprietary `wl`
+driver — `brcmfmac` is open and in-tree, which makes this Mac easier than most.
+
+**Audio — the one that actually bites.** The Cirrus CS8409 bridge with its
+CS42L83 companion is the classic "dummy output / no sound" on Linux Macs. A
+`snd_hda_codec_cs8409` driver has been in the kernel since ~5.13 and will
+*detect* the chip, but on iMac18,3 it does not always select the Apple-specific
+init path, so you get a recognised card and silence. Options, best first:
+
+- Try a current kernel first — the in-tree driver has improved and may just work.
+- iMac18,3-specific patches: <https://github.com/jackdanyell/imac18-3-cs8409-linux-audio>
+- Standalone DKMS module: <https://github.com/egorenar/snd-hda-codec-cs8409>
+- Broader Mac audio project: <https://github.com/davidjo/snd_hda_macbookpro>
+
+Microphone support lags behind playback in all of them. HDMI/DisplayPort audio
+through the GPU (`snd_hda_intel`) is unaffected and works regardless.
+
+**Webcam** needs the out-of-tree `facetimehd` module plus firmware extracted
+from macOS or Boot Camp: <https://github.com/patjak/facetimehd>
+
+General reference for Apple hardware on Linux:
+<https://wiki.archlinux.org/title/Mac>
+
+### Other rough edges
 
 - **The 5K internal panel** is an internal dual-DisplayPort link and has
   historically needed work on Linux. Irrelevant headless, which is the
   configuration that makes the most sense anyway.
-- **Wi-Fi** is Broadcom and usually needs the proprietary `wl` driver.
 - **Fan control** via `applesmc` is mediocre on Apple hardware. Watch thermals
   under sustained load.
 
@@ -168,25 +275,52 @@ Ventura (13.x) is the last macOS this iMac officially supports. It is also the
 **worst of the three options for GPU inference**, for a specific and
 well-documented reason.
 
-### The Metal trap
+### Does this Mac even have Metal?
 
-llama.cpp has a Metal backend, and an Intel macOS build ships with every
-release, so this looks like the obvious path. It is not.
+Yes — but **Metal 2, not Metal 3**, and llama.cpp's official Intel build ships
+no Metal backend at all. Three separate facts, worth keeping apart because they
+are easy to conflate:
 
-On Intel Macs with a *discrete* AMD GPU, llama.cpp's Metal backend maps model
+**1. The GPU supports Metal 2.** The Radeon Pro 580 is Polaris, and macOS uses
+Metal for the window server on it. Metal is not missing from this machine.
+
+**2. It does not support Metal 3.** Apple's Metal 3 on Intel Macs requires AMD
+Radeon Pro Vega or the 5000/6000 series; Polaris predates all of them. The card
+keeps working under Ventura, on Metal 2. So a 2017 iMac can run Ventura and
+still be excluded from Metal 3 — the model year and the GPU are separate
+questions.
+
+**3. The shipped llama.cpp Intel binary has no Metal in it.** Listing every
+entry in `llama-b11063-bin-macos-x64.tar.gz` gives these backends:
+
+```
+libggml-base.dylib   libggml-blas.dylib   libggml-cpu.dylib   libggml-rpc.dylib
+```
+
+No `libggml-metal.dylib`, no `.metallib`, no file matching *metal* anywhere in
+the archive — against the Windows build, which ships `ggml-vulkan.dll`. The
+official Intel macOS release is **CPU, BLAS and RPC only**. Downloading it and
+passing `--n-gpu-layers 99` will not touch the GPU, because there is no GPU
+backend present to touch.
+
+### And if you build Metal yourself
+
+You would have to compile from source with `-DGGML_METAL=ON`. Do not expect a
+win. On Intel Macs with a *discrete* AMD GPU, llama.cpp's Metal backend maps
 weights with shared storage (`newBufferWithBytesNoCopy`). On Apple Silicon,
-where CPU and GPU share memory, that is free. On a discrete card it means the
-GPU re-reads the weights across PCIe on **every token**. The reported result on
-an AMD 6900 XT — a far stronger card than the Pro 580 — was **0.8 tok/s on
-Metal versus 21 tok/s on the same machine's CPU**.
+where CPU and GPU share memory, that costs nothing. On a discrete card it means
+the GPU re-reads the weights across PCIe on **every token**. Reported result on
+an AMD 6900 XT — far stronger than the Pro 580 — was **0.8 tok/s on Metal
+versus 21 tok/s on the same machine's CPU**.
 
-A fix was written (move weights into private VRAM once, select the discrete GPU
-automatically, raise command-buffer parallelism) and proposed upstream. The
-issue was **closed as not planned** and nothing was merged:
+The fix (move weights into private VRAM once, select the discrete GPU
+automatically, raise command-buffer parallelism) was written and proposed
+upstream. The issue was **closed as not planned**; nothing was merged:
 <https://github.com/ggml-org/llama.cpp/issues/15228>
 
-So on stock llama.cpp under Ventura, expect Metal to be *slower than doing
-nothing*. Verify before believing any Metal number on this hardware.
+So the GPU is unreachable on the stock build, and reachable-but-slower-than-CPU
+if you build it yourself. Either way, macOS means CPU inference on this
+machine.
 
 ### What actually works on Ventura
 
