@@ -54,27 +54,26 @@ GPU is 3.2x CPU on the 8B. **Docker costs Ollama a third of its CPU speed** (WSL
 
 ---
 
-## Is $250 actually good value for LLM work?
+## What $250 actually buys
 
-Straight answer: **not if you only care about tokens per second.** Worth being honest since that's what this sub optimises for.
+The LLM performance is the bonus, not the reason. What justifies the price on its own:
 
-| Option | ~Price | 8B generation | What you actually get |
-|---|---|---|---|
-| **This iMac (2017)** | **$250** | **15.3 tok/s** (measured) | Whole computer + 5K display + 64 GB RAM + 1 TB NVMe |
-| Used RX 6600 8 GB | ~$180 | faster — has fp16 | GPU only. Needs PC, PSU, case |
-| Used RTX 3060 12 GB | ~$194–280 | faster, CUDA, 12 GB VRAM | GPU only. Needs PC, PSU, case |
-| Mac Mini M4 16 GB | $599 new | ~28–35 tok/s | Whole computer, no display, 16 GB ceiling |
+**A 27" 5K display.** 5120x2880, 218 PPI, P3 colour. What a new 5K panel costs today:
 
-A used RTX 3060 beats this on raw inference and costs about the same — **but it's a bare card**. Put it in a $200 second-hand tower and you're at $450+ with no monitor, and you've spent more than I did for a machine that does one thing better.
+| Display | Price |
+|---|---|
+| KTC H27P3 (cheapest genuine 5K) | ~$600 |
+| ViewSonic ColorPro VP2788-5K | ~$800 |
+| BenQ MA270U | ~$1,099 |
+| Apple Studio Display | well north of that |
 
-So the actual pitch isn't "cheap LLM box". It's: **if you want a 5K display anyway, the LLM capability is free.** A new 5K panel alone starts at ~$600. At $250 the monitor already justifies the purchase; the i7, the 8 GB Radeon, 64 GB of RAM and a 1 TB NVMe are what's left over.
+The **cheapest** new 5K panel is roughly 2.4x what I paid for an entire working computer. At $250 the monitor alone more than covers the purchase — everything else is attached to the back of it for free.
 
-Two things this setup wins on outright:
+**64 GB of RAM, and it's user-upgradeable.** The 27" has a hatch above the power port: four SO-DIMM slots, five minutes, no disassembly. DDR4-2400 SO-DIMMs are cheap. This is the single biggest reason to pick the 27" 2017 over almost any other all-in-one — and it means you can load models far larger than the VRAM allows and run them on CPU. Slowly, but at all.
 
-- **64 GB of RAM, user-upgradeable.** A 12 GB 3060 simply cannot load a 70B model. This can — on CPU, at ~1 tok/s, which is miserable but non-zero. The RAM ceiling is 4 SO-DIMM slots and five minutes of work.
-- **It's a complete, quiet, assembled machine** with a display, keyboard and trackpad, not a project.
+**A complete, quiet, assembled machine.** Display, keyboard, trackpad, 1 TB NVMe. Nothing to build, nothing to source, no case or PSU to buy.
 
-And what it loses on: **8 GB of VRAM is the hard ceiling.** The 8B at Q4 with 8192 context already uses ~5.6 GB of it, and the 5K desktop eats another 1.6 GB. There's no headroom for a 13B, and no fp16 units to make what's there run faster.
+The honest limit: **8 GB of VRAM is a hard ceiling.** The 8B at Q4 with 8192 context uses ~5.6 GB of it, and the 5K desktop eats another 1.6 GB. There's no room for a 13B on the GPU, and no fp16 units to make what fits run faster. If your goal is purely maximum tokens per second, this is not that machine — it's a very good display that also happens to run an 8B at reading speed.
 
 ---
 
@@ -232,28 +231,19 @@ Also note **Windows 11 isn't supported on this hardware** — the i7-7700K is 7t
 
 ---
 
-## On the hardware itself
+## Before you buy one
 
-**The display is the part that's genuinely hard to argue with.** 5120x2880 at 27", 218 PPI, P3 colour. Current 5K panels for comparison:
+Three things worth knowing that aren't obvious from a listing:
 
-| Display | Price |
-|---|---|
-| KTC H27P3 (cheapest genuine 5K) | ~$600 |
-| ViewSonic ColorPro VP2788-5K | ~$800 |
-| BenQ MA270U | ~$1,099 |
-| Apple Studio Display | well north of that |
+- **It can't be used as an external display for another machine.** Target Display Mode ended with the 2014 models, so it's a whole computer or nothing. If you're eyeing it purely as a cheap 5K monitor for a laptop, it won't do that.
+- **Check the storage.** Fusion Drive and plain-HDD configs exist and the listings often don't say which you're getting. See above — this is the spec people get burned on.
+- **Confirm it's the 27".** RAM is only user-upgradeable on the 27", not the 21.5".
 
-So the **cheapest** new 5K display costs roughly 2.4x what I paid for an entire working computer. Buy the iMac, and the i7, the 8 GB Radeon Pro 580, 64 GB of RAM and a 1 TB NVMe come attached to the monitor for free. If you're in the market for a 5K panel at all, this is worth considering purely on that basis — the LLM performance above is a bonus, not the justification.
-
-Two caveats before anyone buys one as a monitor: the 2017 iMac **cannot** be used as an external display for another machine (Target Display Mode ended with the 2014 models), so it's a whole computer or nothing. And it's glossy, which some people can't live with.
-
-RAM is user-upgradeable on the 27" (not the 21.5"): a hatch above the power port, four SO-DIMM slots, five minutes, no disassembly. 64 GB of DDR4-2400 SO-DIMM is cheap now, and that's the main reason to pick this over other all-in-ones.
-
-Downsides are what you'd expect from a 2017 machine: no warranty, glossy screen, audible fans under load, and 8 GB of VRAM that the 5K display is already eating into — llama-server holds ~5.6 GB of it, so 8192 context is about the ceiling.
+Otherwise it's what you'd expect from a 2017 machine: no warranty, glossy screen, audible fans under load.
 
 **Verdict:** ~15 tok/s on an 8B for $250, once you get past a dead driver, a broken FA kernel, a corrupting speculation setting, and two llama-server defaults that are wrong for single-user use. If you want something that works out of the box, buy something else.
 
-Don't buy it *for* the LLM performance — a used RTX 3060 beats it for similar money if you already own a PC. Buy it if you want a 5K display, because a new 5K panel alone starts around $600. At $250 the monitor covers the purchase on its own, so the worst realistic outcome is that you own a very good display and the inference side disappoints. Mine didn't, but it took a full day of debugging to get there, and I've put every flag and every negative result in the repo so the next person doesn't have to repeat it.
+Buy it for the 5K display and the 64 GB of upgradeable RAM — a new 5K panel alone starts around $600, so at $250 the monitor covers the purchase on its own. The worst realistic outcome is that you own a very good display and the inference side disappoints. Mine didn't, but it took a full day of debugging to get there, and I've put every flag and every negative result in the repo so the next person doesn't have to repeat it.
 
 Scripts with all the flags baked in, the long-form write-up and the exact `llama-bench` / API commands used for every number above: **https://github.com/hyper07/imac-llm** — happy to answer questions or run extra benchmarks if anyone wants a specific model tested.
 
