@@ -1,0 +1,24 @@
+# Only the scripts and documentation belong in this repo.
+# Everything below is either multi-gigabyte or machine-specific.
+
+# GGUF models (~11.6 GB) - download links are in README.md
+models/
+*.gguf
+
+# AMD Boot Camp R6.4 driver package (~1.8 GB) - link in README.md
+driver/
+
+# Installers kept locally for a rebuild (llama.cpp zip, Vulkan runtime)
+downloads/
+
+# Extra llama.cpp builds used for the flash-attention comparison
+test-builds/
+
+# llama.cpp binaries - install from the release zip, see README.md
+*.exe
+*.dll
+LICENSE-LLVM-OpenMP
+
+# Local scratch
+*.log
+*.tmp
