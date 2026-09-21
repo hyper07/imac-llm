@@ -125,6 +125,21 @@ Real-world this helps whenever the reply reuses the prompt: reformatting, editin
 
 Gotcha if you try draft models: `--spec-type` defaults to `none`, so `-md` alone loads the draft model and silently never uses it. Look for `draft acceptance` in the log.
 
+**MTP is the one thing that speeds up ordinary generation** — worth knowing if you're on a weak GPU. `--spec-type draft-mtp` needs draft heads trained into the model (Qwen3-8B has none; the server refuses to start rather than silently no-op'ing). The Qwen3.5 family publishes MTP GGUFs down to 0.8B, so I tested the 4B and 9B:
+
+| Config | prose | code | echo |
+|---|---|---|---|
+| Qwen3.5-4B-MTP, no spec | 17.15 | 17.05 | 16.70 |
+| Qwen3.5-4B-MTP `n-max 2` | 17.13 | **21.89** (83% acc) | 24.20 |
+| Qwen3.5-4B-MTP `n-max 6` | **9.97** | 16.97 | 28.69 |
+| Qwen3.5-9B-MTP `n-max 2` | 14.28 | **18.13** (89% acc) | 19.47 |
+
+Same mechanism as ngram: the draft head is *inside* the model, so drafting is near-free. +28% on code for the 4B, +57% for the 9B over their own baselines — real gains on normal generation, not just the echo case.
+
+Two warnings. **Don't raise `n-max`** — acceptance falls, every rejected token is wasted verification, and at `n-max 6` on prose the 4B collapsed to 9.97 tok/s, 42% *below* its own baseline. And **MTP doesn't stack with ngram** — setting `--spec-type ngram-map-k` on an MTP model replaces MTP rather than combining.
+
+Did I switch? **No.** The MTP models have lower baselines, so against my actual 8B + ngram setup the 9B lands at −7% prose, +17% code, −64% echo, and only fits at half the context (5.47 GB leaves no room for 8192). MTP is clearly a good technique; these particular models just don't beat what I have.
+
 **Prompt caching, by contrast, does most of the real work** — same ~980-token prefix twice: 8.94 s cold → **0.87 s** warm, 964/979 tokens reused. The first long paste hurts; the rest of the conversation doesn't.
 
 ---

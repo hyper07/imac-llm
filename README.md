@@ -337,19 +337,74 @@ This pays off whenever the reply reuses the prompt — reformatting, editing,
 "rewrite this", code changes, and RAG answers that quote their sources. It does
 nothing for free-form chat, and nothing is exactly what it costs there.
 
-#### Multi-token prediction (`draft-mtp`) — not applicable
+#### Multi-token prediction — works, and it is the only thing that speeds up ordinary generation
 
-Requires MTP heads built into the model, as DeepSeek-V3 and GLM-style models
-have. Qwen3-8B has none, and the server refuses to start rather than falling
-back:
+MTP needs draft heads trained into the model. Qwen3-8B has none, and the server
+refuses to start rather than falling back — which is better than the silent
+no-op `--spec-type` gives when left at its default:
 
 ```
 common_speculative_init_result: failed to create MTP context
 srv    load_model: failed to create MTP context
 ```
 
-Worth knowing it fails loudly, which is better than the silent no-op
-`--spec-type` has when left at its default.
+MTP-equipped GGUFs do exist though, and the Qwen3.5 family publishes them down
+to 0.8B. Tested `unsloth/Qwen3.5-4B-MTP-GGUF` Q4_K_M (2.64 GiB — the extra over
+a plain 4B is the MTP head), `--parallel 1`, 160 tokens, greedy:
+
+| Config | prose | code | echo | acceptance (code) |
+|---|---|---|---|---|
+| MTP model, no speculation | 17.15 | 17.05 | 16.70 | — |
+| **MTP `--spec-draft-n-max 2`** | 17.13 | **21.89** | 24.20 | 83% |
+| MTP `--spec-draft-n-max 3` | 15.73 | 21.07 | 26.61 | 70% |
+| MTP `--spec-draft-n-max 6` | **9.97** | 16.97 | 28.69 | 57% |
+| MTP model + `ngram-map-k` | 16.93 | 16.99 | **66.96** | — |
+| Qwen3-4B, no MTP (reference) | 18.74 | 18.78 | 18.39 | — |
+
+**`n-max 2` is the setting**: +28% on code with no measurable cost on prose.
+This is the only lever measured here that accelerates *ordinary* generation
+rather than the echo-shaped special case ngram exploits. The mechanism is the
+same one that makes ngram work — the MTP head is part of the model, so drafting
+is nearly free, unlike the separate 0.6B draft model that lost 24–63%.
+
+**Do not raise `n-max` hoping for more.** Acceptance falls as the draft runs
+longer, and every rejected token is wasted verification: at `n-max 6` on prose
+acceptance drops to 24% and throughput **collapses to 9.97 tok/s**, 42% below
+the same model's own baseline.
+
+**MTP and ngram do not stack.** Passing `--spec-type ngram-map-k` to the MTP
+model replaces MTP instead of combining: echo jumps to 66.96 (ngram working)
+while code falls back to 16.99 (MTP off). Pick one per server.
+
+**The honest caveat:** this MTP model is *slower at baseline* than the plain
+Qwen3-4B already in `models\` — 17.15 against 18.74 on prose. Net against the
+model you would otherwise run, MTP at `n-max 2` is **−9% on prose and +17% on
+code**, not +28%. Different model generation too (Qwen3.5 vs Qwen3), so quality
+differs; only speed was measured here.
+
+##### At production scale, MTP still does not beat the current setup
+
+The 4B is not the model this machine actually runs, so the same test was done
+on `unsloth/Qwen3.5-9B-MTP-GGUF` Q4_K_M (5.47 GiB). It **only fits at
+`--ctx-size 4096`**, not the 8192 used in production, so the 8B was re-measured
+at 4096 for a like-for-like comparison:
+
+| Config (ctx 4096) | prose | code | echo |
+|---|---|---|---|
+| **Qwen3-8B + `ngram-map-k`** (production) | **15.35** | 15.48 | **54.37** |
+| Qwen3.5-9B-MTP, no speculation | 11.58 | 11.58 | 11.53 |
+| **Qwen3.5-9B-MTP `n-max 2`** | 14.28 | **18.13** | 19.47 |
+| Qwen3.5-9B-MTP `n-max 3` | 12.89 | 17.36 | 21.95 |
+
+MTP works better on the larger model in relative terms — **+57% on code** over
+its own baseline, against +28% for the 4B, with 89% acceptance. But its
+baseline is so much lower that it does not catch up. Against the production
+config it is **−7% on prose, +17% on code, −64% on echo**, and it costs half the
+context.
+
+**So the 8B with `ngram-map-k` stays.** The one case for switching is
+code-heavy work where long context is not needed: +17% there, at 4096 tokens of
+context. The models are kept in `models\` for anyone wanting to re-test.
 
 #### Draft models — 24-63% slower
 
@@ -404,8 +459,9 @@ On an echo-shaped prompt the same setting reaches 46.53 tok/s.
 | Flash attention | Slower on prompts (122 vs 128) *and* produces garbage |
 | Q8_0 instead of Q4_K_M | +5% prompts, −12% generation, +71% VRAM |
 | Speculative decoding with a 0.6B **draft model**, 4 configs | 24–63% **slower** — the draft model's own forward passes cost more than they save |
-| ngram speculation on free-form chat | no change either way (15.36 vs 15.36) — but see below, it is a 3.6x win on echo-shaped prompts and is now enabled |
-| `--spec-type draft-mtp` | server refuses to start; Qwen3-8B has no MTP heads |
+| ngram speculation on free-form chat | no change either way (15.36 vs 15.36) — but it is a 3.6x win on echo-shaped prompts and is now enabled |
+| `--spec-type draft-mtp` on Qwen3-8B | server refuses to start; the model has no MTP heads |
+| Switching to an MTP model (Qwen3.5 4B / 9B) | MTP itself works (+28% / +57% on code over their own baselines) but neither beats the 8B + ngram setup: −7% prose, −64% echo, and half the context |
 | Pinning another upstream build to get flash attention | b11026 and b11065 corrupt long prompts and halve pp exactly like b11063; the working FA kernel is Ollama's fork only |
 | Default 4 slots with unified KV | not a speedup lever but a **slowdown**: −24% by the fourth conversation; fixed with `--parallel 1` (*One server slot*) |
 
@@ -458,6 +514,8 @@ enough either, because it re-detects the card through ROCm
 | Native models `qwen3-8b-local`, `qwen3-4b-local` | ~7 GB | `ollama rm qwen3-8b-local qwen3-4b-local` |
 | `models\Qwen3-4B-Q8_0.gguf` (quant test only) | 3.98 GB | `Remove-Item models\Qwen3-4B-Q8_0.gguf` |
 | `models\Qwen3-0.6B-Q8_0.gguf` (speculative-decoding test only) | 610 MB | `Remove-Item models\Qwen3-0.6B-Q8_0.gguf` |
+| `models\Qwen3.5-4B-MTP-Q4_K_M.gguf` (MTP test) | 2.64 GB | `Remove-Item models\Qwen3.5-4B-MTP-Q4_K_M.gguf` |
+| `models\Qwen3.5-9B-MTP-Q4_K_M.gguf` (MTP test) | 5.47 GB | `Remove-Item models\Qwen3.5-9B-MTP-Q4_K_M.gguf` |
 | `test-builds\` (upstream b11026 and b11065, flash-attention test only) | ~130 MB | `Remove-Item -Recurse test-builds` |
 
 The native ones are duplicates of the GGUFs already in `models\`. Pre-existing
