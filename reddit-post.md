@@ -16,6 +16,8 @@ stock option.
 
 Picked up a 27" 5K iMac (2017) for **$250** and ran a local LLM stack on it properly. Posting the full numbers plus the things that went wrong, because I couldn't find either when I was looking.
 
+For context on that price: the cheapest *new* 27" 5K panel on the market right now is around **$600**, and most sit at $800–1,100+. I paid $250 for a 5120x2880 display **and** a quad-core i7, 8 GB of VRAM, 64 GB of RAM and a 1 TB NVMe attached to the back of it. Even if the machine were a total failure as an LLM box, the monitor alone would have made it worth the money — everything below is upside.
+
 **Hardware:** Core i7-7700K (4c/8t), Radeon Pro 580 8 GB, 64 GB DDR4-2400, 1 TB **PCIe NVMe** SSD (`APPLE SSD SM1024L`, 2,062 MB/s measured unbuffered), Windows 11 Pro via Boot Camp. GPU inference through llama.cpp's Vulkan backend — no ROCm on Polaris.
 
 **Check the storage before you buy one.** The 2017 27" shipped as a Fusion Drive (small SSD cache bolted onto a 5400 rpm spinner), a plain HDD, or a real PCIe NVMe blade SSD. Mine is the NVMe. GGUFs are big — the 8B is 4.7 GB — so a Fusion or HDD config means a long wait every time you cold-load a model, and the listings don't always make it obvious which you're getting. This is the spec people get burned on, more than the CPU.
@@ -135,11 +137,26 @@ Also note **Windows 11 isn't supported on this hardware** — the i7-7700K is 7t
 
 ## On the hardware itself
 
-Briefly, since this is a performance post: 5120x2880 at 27" for $250 is the part that's hard to argue with — a standalone 5K panel still costs more than the whole machine. RAM is user-upgradeable on the 27" (not the 21.5"): a hatch above the power port, four SO-DIMM slots, five minutes, no disassembly. 64 GB of DDR4-2400 SO-DIMM is cheap now, and that's the main reason to pick this over other all-in-ones.
+**The display is the part that's genuinely hard to argue with.** 5120x2880 at 27", 218 PPI, P3 colour. Current 5K panels for comparison:
+
+| Display | Price |
+|---|---|
+| KTC H27P3 (cheapest genuine 5K) | ~$600 |
+| ViewSonic ColorPro VP2788-5K | ~$800 |
+| BenQ MA270U | ~$1,099 |
+| Apple Studio Display | well north of that |
+
+So the **cheapest** new 5K display costs roughly 2.4x what I paid for an entire working computer. Buy the iMac, and the i7, the 8 GB Radeon Pro 580, 64 GB of RAM and a 1 TB NVMe come attached to the monitor for free. If you're in the market for a 5K panel at all, this is worth considering purely on that basis — the LLM performance above is a bonus, not the justification.
+
+Two caveats before anyone buys one as a monitor: the 2017 iMac **cannot** be used as an external display for another machine (Target Display Mode ended with the 2014 models), so it's a whole computer or nothing. And it's glossy, which some people can't live with.
+
+RAM is user-upgradeable on the 27" (not the 21.5"): a hatch above the power port, four SO-DIMM slots, five minutes, no disassembly. 64 GB of DDR4-2400 SO-DIMM is cheap now, and that's the main reason to pick this over other all-in-ones.
 
 Downsides are what you'd expect from a 2017 machine: no warranty, glossy screen, audible fans under load, and 8 GB of VRAM that the 5K display is already eating into — llama-server holds ~5.6 GB of it, so 8192 context is about the ceiling.
 
 **Verdict:** ~16.7 tok/s on an 8B for $250, once you get past a dead driver, a broken FA kernel, and two llama-server defaults that are wrong for single-user use. If you want something that works out of the box, buy something else.
+
+The thing that makes the risk asymmetric, though: a new 5K panel on its own starts around $600. At $250 the display alone already covers the purchase, so the worst realistic outcome is that you own a very good monitor and the LLM side disappoints. Mine didn't.
 
 Scripts with all the flags baked in, the long-form write-up and the exact `llama-bench` / API commands used for every number above: **https://github.com/hyper07/imac-llm** — happy to answer questions or run extra benchmarks if anyone wants a specific model tested.
 
